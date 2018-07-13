@@ -50,7 +50,7 @@ def parse_network_cfg(cfgfile):
             line = line.replace(' ','')
             layerInfo += line
     print('layer number is %d'%(layerList.__len__() - 1) )
-    #print(layerList[0])
+    print(layerList[31])
     return layerList
 
 
@@ -61,8 +61,6 @@ if __name__ == '__main__':
     print('%d classes in dataset'%classes)
     print('trainlist directory is ' + trainlist)
     layerList = parse_network_cfg(args.netcfg)
-    print(layerList[1])
     layer = []
-#    layer.append( l.make_layer(layerList[1], [],[], 1) )
-    print(layerList.__len__())
+    print('the depth of the network is %d'%layerList.__len__())
     network = net.network(layerList)

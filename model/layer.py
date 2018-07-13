@@ -174,6 +174,76 @@ def make_route_layers(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, ord
     print('%3d  %8s  %4d  %6s     %4d x %4d x %4d  ->  %4d x %4d x %4d'%(order,name,out_channel,print_str,w_in,h_in,in_channel, w_out,h_out,out_channel))
     return l_route
 
+def make_region_layer(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, order):
+    p1 = re.compile(r'anchors=')
+    p2 = re.compile(r'classes=')
+    p3 = re.compile(r'coords=')
+    p4 = re.compile(r'num=')
+    p5 = re.compile(r'softmax=')
+    p6 = re.compile(r'bias_match=')
+    p7 = re.compile(r'object_scale=')
+    p8 = re.compile(r'noobject_scale=')
+    p9 = re.compile(r'class_scale=')
+    p10 = re.compile(r'coord_scale=')
+    p11 = re.compile(r'absolute=')
+    p12 = re.compile(r'thresh=')
+    p13 = re.compile(r'random=')
+    p14 = re.compile(r'jitter=')
+    p15 = re.compile(r'rescore=')
+    anchors = []
+    classes = coords = num = softmax = bias_match = object_scale = 0
+    noobject_scale = absolute = random = rescore = 0
+    thresh = jitter = 0.0
+    for info in cfglist:
+        if p1.findall(info):
+            anchors_str = re.sub('anchors=','',info).split(',')
+            for i in range(anchors_str.__len__()):
+                anchors.append(float(anchors_str[i]))
+            print(anchors)
+        if p2.findall(info):
+            classes = int( re.sub('classes=','',info) )
+        if p3.findall(info):
+            coords = int( re.sub('coords=','',info) )
+        if p4.findall(info):
+            num = int( re.sub('num=','',info) )
+        if p5.findall(info):
+            softmax = int( re.sub('softmax=','',info) )
+        if p6.findall(info):
+            bias_match = int( re.sub('bias_match=','',info) )
+        if p7.findall(info):
+            object_scale = int( re.sub('object_scale=','',info) )
+        if p8.findall(info):
+            noobject_scale = int( re.sub('noobject_scale=','',info) )
+        if p9.findall(info):
+            class_scale = int( re.sub('class_scale=','',info) )
+        if p10.findall(info):
+            coord_scale = int( re.sub('coord_scale=','',info) )
+        if p11.findall(info):
+            absolute = int( re.sub('absolute=','',info) )
+        if p12.findall(info):
+            thresh = float( re.sub('thresh=','',info) )
+        if p13.findall(info):
+            random = int( re.sub('random=','',info) )
+        if p14.findall(info):
+            jitter = float( re.sub('jitter=','',info) )
+        if p15.findall(info):
+            rescore = int( re.sub('rescore=','',info) )
+        in_channel = ChannelOut[order]
+        ChannelIn.append(in_channel)
+        out_channel = in_channel
+        ChannelOut.append(out_channel)
+        w_in = widthlist[order]
+        w_out = w_in 
+        h_in = heightlist[order]
+        h_out = h_in
+        widthlist.append(w_out)
+        heightlist.append(h_out)
+        layers = []
+        layers.append( F.region(classes, coords, num, bias_match) )
+        name = 'detection'
+        l_region = Layer('region', order, in_channel, out_channel, layers=layers)
+        print('%3d  %10s'%(order,name))
+        return l_region
 
 def make_layer(layercfg, widthlist, heightlist, ChannelIn, ChannelOut, order):
     line = layercfg.split('\n')
@@ -186,4 +256,6 @@ def make_layer(layercfg, widthlist, heightlist, ChannelIn, ChannelOut, order):
         layer = make_reorg_layers(line, widthlist, heightlist, ChannelIn, ChannelOut, order)
     if line[0] == '[route]':
         layer = make_route_layers(line, widthlist, heightlist, ChannelIn, ChannelOut, order)
+    if line[0] == '[region]':
+        layer = make_region_layer(line, widthlist, heightlist, ChannelIn, ChannelOut, order)
     return layer
