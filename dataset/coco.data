@@ -1,0 +1,6 @@
+classes= 80
+train  = /home/adas/data/darknet/coco/trainvalno5k.txt
+valid = /home/adas/data/darknet/coco/5k.txt
+names = data/coco.names
+backup = /home/adas/data/darknet/backup/
+eval=coco
