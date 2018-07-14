@@ -11,14 +11,22 @@ class network(nn.Module):
         ChannelOut = []
         width, height, self.channels, self.lr, self.momentum, self.decay, self.max_batches, self.burn_in, self.policy, self.steps, self.scales = make_input(layerlist[0], ChannelIn, ChannelOut)
         i = 1
-        widthList = []
-        heightList = []
-        widthList.append(width)
-        heightList.append(height)
+        self.widthList = []
+        self.heightList = []
+        self.widthList.append(width)
+        self.heightList.append(height)
         self.layers = []
         for i in range(layerlist.__len__()):
-            layer = l.make_layer(layerlist[i], widthList, heightList, ChannelIn, ChannelOut, i-1)
+            layer = l.make_layer(layerlist[i], self.widthList, self.heightList, ChannelIn, ChannelOut, i-1)
             self.layers.append(layer)
+        self.layerNum = self.layers.__len__()
+    def forward(self, x):
+        input = x
+        for i in range(self.layerNum):
+            output = self.layers[i].forward(input, self.Layers)
+            input = output
+        return output
+
 
 
 def make_input(layercfg, ChannelIn, ChannelOut):

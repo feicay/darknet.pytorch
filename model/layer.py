@@ -23,12 +23,13 @@ class Layer(nn.Module):
     def forward(self, x, Layers):       
         if self.l_route != 0:
             self.input = torch.cat( (Layers[self.order + self.l_in].output, Layers[self.order + self.l_route].output), 1)
+            self.output = self.input
         else:
             self.input = x
-        if self.l_shortcut != 0:
-            self.output = self.input + Layers[self.order + self.l_shortcut].output
-        else:
-            self.output = self.flow(self.input)
+            if self.l_shortcut != 0:
+                self.output = self.input + Layers[self.order + self.l_shortcut].output
+            else:
+                self.output = self.flow(self.input)
         return self.output
 
         
@@ -73,9 +74,9 @@ def make_conv_layers(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, orde
         pass
     l_conv = Layer('conv', order, in_channel, out_channel, layers=layers)
     w_in = widthlist[order]
-    w_out = (w_in + 2*padding_size - size)/stride + 1
+    w_out = int((w_in + 2*padding_size - size)/stride + 1)
     h_in = heightlist[order]
-    h_out = (h_in + 2*padding_size - size)/stride + 1
+    h_out = int((h_in + 2*padding_size - size)/stride + 1)
     widthlist.append(w_out)
     heightlist.append(h_out)
     name = 'conv2d'
@@ -100,9 +101,9 @@ def make_maxpool_layers(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, o
     ChannelIn.append(in_channel)
     ChannelOut.append(out_channel)
     w_in = widthlist[order]
-    w_out = (w_in + 2*pad - size)/stride + 1
+    w_out = int((w_in + 2*pad - size)/stride + 1)
     h_in = heightlist[order]
-    h_out = (h_in + 2*pad - size)/stride + 1
+    h_out = int((h_in + 2*pad - size)/stride + 1)
     widthlist.append(w_out)
     heightlist.append(h_out)
     name = 'maxpool'
@@ -122,9 +123,9 @@ def make_reorg_layers(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, ord
     out_channel = in_channel*stride*stride
     ChannelOut.append(out_channel)
     w_in = widthlist[order]
-    w_out = w_in /stride 
+    w_out = int(w_in /stride) 
     h_in = heightlist[order]
-    h_out = h_in /stride
+    h_out = int(h_in /stride)
     widthlist.append(w_out)
     heightlist.append(h_out)
     name = 'reorg'
@@ -173,6 +174,57 @@ def make_route_layers(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, ord
     name = 'route'
     print('%3d  %8s  %4d  %6s     %4d x %4d x %4d  ->  %4d x %4d x %4d'%(order,name,out_channel,print_str,w_in,h_in,in_channel, w_out,h_out,out_channel))
     return l_route
+
+def make_upsample_layers(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, order):
+    p1 = re.compile(r'stride=')
+    stride = 0
+    for info in cfglist:
+        if p1.findall(info):
+            stride = int( re.sub('stride=','',info) )
+    layers = []
+    in_channel = ChannelOut[order]
+    out_channel = in_channel
+    ChannelIn.append(in_channel)
+    ChannelOut.append(out_channel)
+    w_in = widthlist[order]
+    w_out = w_in*stride
+    h_in = heightlist[order]
+    h_out = h_in*stride
+    widthlist.append(w_out)
+    heightlist.append(h_out)
+    name = 'upsample'
+    layers.append( nn.UpsamplingNearest2d(scale_factor=stride) )
+    l_upsample = Layer('upsample', order, in_channel, out_channel, layers=layers)
+    print('%3d  %8s  %4d  %d          %4d x %4d x %4d  ->  %4d x %4d x %4d'%(order,name,out_channel,stride,w_in,h_in,in_channel, w_out,h_out,out_channel))
+    return l_upsample
+
+def make_shortcut_layers(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, order):
+    p1 = re.compile(r'from=')
+    p2 = re.compile(r'activation')
+    for info in cfglist:
+        if p1.findall(info):
+            shortcut = int( re.sub('from=','',info) )
+        if p2.findall(info):
+            activation = re.sub('activation=','',info)
+    in_channel = ChannelOut[order] 
+    out_channel = in_channel
+    ChannelIn.append(in_channel)
+    ChannelOut.append(out_channel)
+    w_in = widthlist[order]
+    w_out = w_in
+    h_in = heightlist[order]
+    h_out = h_in
+    widthlist.append(w_out)
+    heightlist.append(h_out)
+    if activation == 'linear':
+        l_shortcut = Layer('shortcut', order, ChannelIn, ChannelOut, l_shortcut=shortcut)
+    else :
+        print('unsupport shortcut activation type!')
+        sys.exit(0)
+    name = 'shortcut' 
+    print('%3d  %8s  %4d  %6d     %4d x %4d x %4d  ->  %4d x %4d x %4d'%(order,name,out_channel,shortcut,w_in,h_in,in_channel, w_out,h_out,out_channel))
+    return l_shortcut
+    
 
 def make_region_layer(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, order):
     p1 = re.compile(r'anchors=')
@@ -245,6 +297,59 @@ def make_region_layer(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, ord
         print('%3d  %10s'%(order,name))
         return l_region
 
+def make_yolo_layer(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, order):
+    p1 = re.compile(r'mask=')
+    p2 = re.compile(r'anchors=')
+    p3 = re.compile(r'classes=')
+    p4 = re.compile(r'num=')
+    p5 = re.compile(r'jitter=')
+    p6 = re.compile(r'ignore_thresh=')
+    p7 = re.compile(r'truth_thresh=')
+    p8 = re.compile(r'random=')
+    anchors = []
+    mask = []
+    classes = num =  random  = truth_thresh = 0
+    ignore_thresh =  jitter = 0.0
+    for info in cfglist:
+        if p1.findall(info):
+            mask_str = re.sub('mask=','',info).split(',')
+            for i in range(mask_str.__len__()):
+                mask.append(int(mask_str[i]))
+            print(mask)
+        if p2.findall(info):
+            anchors_str = re.sub('anchors=','',info).split(',')
+            for i in range(anchors_str.__len__()):
+                anchors.append(float(anchors_str[i]))
+            print(anchors)
+        if p3.findall(info):
+            classes = int( re.sub('classes=','',info) )
+        if p4.findall(info):
+            num = int( re.sub('num=','',info) )
+        if p5.findall(info):
+            jitter = float( re.sub('jitter=','',info) )
+        if p6.findall(info):
+            ignore_thresh = float( re.sub('ignore_thresh=','',info) )
+        if p7.findall(info):
+            truth_thresh = int( re.sub('truth_thresh=','',info) )
+        if p8.findall(info):
+            random = int( re.sub('random=','',info) )
+        in_channel = ChannelOut[order]
+        ChannelIn.append(in_channel)
+        out_channel = in_channel
+        ChannelOut.append(out_channel)
+        w_in = widthlist[order]
+        w_out = w_in 
+        h_in = heightlist[order]
+        h_out = h_in
+        widthlist.append(w_out)
+        heightlist.append(h_out)
+        layers = []
+        layers.append( F.yolo(classes, num, mask, anchors, ignore_thresh) )
+        name = 'yolo'
+        l_region = Layer('yolo', order, in_channel, out_channel, layers=layers)
+        print('%3d  %8s'%(order,name))
+        return l_region
+
 def make_layer(layercfg, widthlist, heightlist, ChannelIn, ChannelOut, order):
     line = layercfg.split('\n')
     layer = None
@@ -256,6 +361,12 @@ def make_layer(layercfg, widthlist, heightlist, ChannelIn, ChannelOut, order):
         layer = make_reorg_layers(line, widthlist, heightlist, ChannelIn, ChannelOut, order)
     if line[0] == '[route]':
         layer = make_route_layers(line, widthlist, heightlist, ChannelIn, ChannelOut, order)
+    if line[0] == '[upsample]':
+        layer = make_upsample_layers(line, widthlist, heightlist, ChannelIn, ChannelOut, order)
+    if line[0] == '[shortcut]':
+        layer = make_shortcut_layers(line, widthlist, heightlist, ChannelIn, ChannelOut, order)
     if line[0] == '[region]':
         layer = make_region_layer(line, widthlist, heightlist, ChannelIn, ChannelOut, order)
+    if line[0] == '[yolo]':
+        layer = make_yolo_layer(line, widthlist, heightlist, ChannelIn, ChannelOut, order)
     return layer

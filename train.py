@@ -9,7 +9,7 @@ import model.network as net
 def parse_args():
     parser = argparse.ArgumentParser(description='train a network')
     parser.add_argument('--dataset',help='training set config file',default='dataset/coco.data',type=str)
-    parser.add_argument('--netcfg',help='the network config file',default='cfg/yolov2.cfg',type=str)
+    parser.add_argument('--netcfg',help='the network config file',default='cfg/yolov3.cfg',type=str)
     parser.add_argument('--weight',help='the network weight file',default='weight/yolov3_final.weight',type=str)
     parser.add_argument('--batch',help='training batch size',default=64,type=int)
     parser.add_argument('--vis',help='visdom the training process',default=1,type=int)
@@ -49,8 +49,8 @@ def parse_network_cfg(cfgfile):
                 continue
             line = line.replace(' ','')
             layerInfo += line
+        layerList.append(layerInfo)
     print('layer number is %d'%(layerList.__len__() - 1) )
-    print(layerList[31])
     return layerList
 
 
@@ -62,5 +62,5 @@ if __name__ == '__main__':
     print('trainlist directory is ' + trainlist)
     layerList = parse_network_cfg(args.netcfg)
     layer = []
-    print('the depth of the network is %d'%layerList.__len__())
+    print('the depth of the network is %d'%(layerList.__len__()-1))
     network = net.network(layerList)
