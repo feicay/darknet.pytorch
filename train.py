@@ -5,11 +5,12 @@ import sys
 import cv2
 import re
 import model.network as net
+import model.loss as loss
 
 def parse_args():
     parser = argparse.ArgumentParser(description='train a network')
     parser.add_argument('--dataset',help='training set config file',default='dataset/coco.data',type=str)
-    parser.add_argument('--netcfg',help='the network config file',default='cfg/yolov3.cfg',type=str)
+    parser.add_argument('--netcfg',help='the network config file',default='cfg/yolov2.cfg',type=str)
     parser.add_argument('--weight',help='the network weight file',default='weight/yolov3_final.weight',type=str)
     parser.add_argument('--batch',help='training batch size',default=64,type=int)
     parser.add_argument('--vis',help='visdom the training process',default=1,type=int)
@@ -60,7 +61,15 @@ if __name__ == '__main__':
     classes, trainlist, namesdir, backupdir = parse_dataset_cfg(args.dataset)
     print('%d classes in dataset'%classes)
     print('trainlist directory is ' + trainlist)
+    #step 1: parse the network
     layerList = parse_network_cfg(args.netcfg)
     layer = []
     print('the depth of the network is %d'%(layerList.__len__()-1))
     network = net.network(layerList)
+    print(network.layers[-1].flow[0].anchors)
+    criterion = loss.lossYoloV2(network.layers[-1].flow[0])
+    #step 2: load network parameters
+
+    #step 3: load data 
+
+    #step 4: start train
