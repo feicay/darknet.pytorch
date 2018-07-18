@@ -6,6 +6,8 @@ import cv2
 import re
 import model.network as net
 import model.loss as loss
+import model.data as dat
+from torch.utils import data
 
 def parse_args():
     parser = argparse.ArgumentParser(description='train a network')
@@ -71,5 +73,10 @@ if __name__ == '__main__':
     #step 2: load network parameters
 
     #step 3: load data 
-
+    dataset = dat.YoloDataset(trainlist,416,416)
+    dataloader = data.DataLoader(dataset, batch_size=64, shuffle=1)
+    dataIter = iter(dataloader)
+    imgs, labels = next(dataIter)
+    print(imgs.size())
+    print(labels.size())
     #step 4: start train

@@ -31,6 +31,8 @@ class lossYoloV2(nn.Module):
         self.recall = 0.0
         self.precision = 0.0
         self.obj = 0.0
+        self.noobj = 0.0
+        self.obj_pred_count = 0
         self.loss_obj = 0.0
         self.loss_noobj = 0.0
         self.loss_coords = 0.0
@@ -51,6 +53,14 @@ class lossYoloV2(nn.Module):
     def forward(self, x, truth):
         batch_size, channels, in_height, in_width = x.size()
         self.seen += 1
+        self.count = 0
+        self.obj_pred_count = 0
+        self.iou = 0.0
+        self.recall = 0.0
+        self.precision = 0.0
+        self.class_precision = 0.0
+        self.obj = 0.0
+        self.noobj = 0.0
         self.loss_obj = 0.0
         self.loss_noobj = 0.0
         self.loss_coords = 0.0
@@ -66,7 +76,7 @@ class lossYoloV2(nn.Module):
                         obj_pred = x_b[0][4][j][i]
                         best_iou = 0.0
                         for t in range(30):
-                            box_truth = truth_b[0][0:4][t]
+                            box_truth = truth_b[0][t][0:4]
                             if box_truth[2] < 0.00001:
                                 break
                             iou = box_iou(box_pred.view(4,1), box_truth.view(4,1))
@@ -74,12 +84,80 @@ class lossYoloV2(nn.Module):
                                 best_iou = iou
                         if best_iou < self.thresh:
                             self.loss_noobj += (self.noobject_scale * (0 - obj_pred) ) ** 2
+                            self.noobj += obj_pred
+                        else:
+                            self.obj_pred_count += 1
                         if self.seen < 500:
                             box_truth = Variable(torch.Tensor(4))
                             box_truth[0] = (i + 0.5)/in_width
                             box_truth[1] = (j + 0.5)/in_height
                             box_truth[2] = self.anchors[2*n]/in_width
                             box_truth[3] = self.anchors[2*n + 1]/in_height
-
+                            tx = 0.5
+                            ty = 0.5
+                            tw = 0
+                            th = 0
+                            box_t = Variable(torch.Tensor([tx,ty,tw,th]))
+                            box_delta = box_t.sub(box_pred.view(4)) * 0.01
+                            self.loss_coords += (box_delta**2).sum()
+            for t in range(30):
+                box_truth = truth_b[0][t][0:4].view(4,1)
+                class_truth = int( truth_b[0][t][4].view(1) )
+                if box_truth[2] < 0.00001:
+                    break
+                best_iou = 0.0
+                best_n = 0
+                i = int(box_truth[0] * in_width)
+                j = int(box_truth[1] * in_height)
+                #find the best iou for the current label
+                box_truth_shift = box_truth
+                box_truth_shift[0] = 0.0
+                box_truth_shift[1] = 0.0
+                for n in range(self.num):
+                    box_pred = x_b[0][(n*self.anchor_len):(n*self.anchor_len+4)][j][i].view(4,1)
+                    box_pred_shift = box_pred
+                    box_pred_shift[0] = 0.0
+                    box_pred_shift[1] = 0.0
+                    iou = box_iou(box_pred_shift, box_truth_shift)
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_n = n
+                #calculate the coords loss
+                loss_box_scale = self.loss_coords * (2 - box_truth[2]*box_truth[3])
+                tx = box_truth[0] * in_width - i
+                ty = box_truth[1] * in_height - j
+                tw = torch.log( box_truth[2] * in_width / self.anchors[2*n] )
+                th = torch.log( box_truth[3] * in_height / self.anchors[2*n + 1] )
+                box_t = Variable(torch.Tensor([tx,ty,tw,th]))
+                box_best = x_b[0][(best_n*self.anchor_len):(best_n*self.anchor_len+4)][j][i].view(4,1)
+                box_delta = box_t.sub(box_best.view(4)) * loss_box_scale
+                self.loss_coords += (box_delta**2).sum()
+                if iou > 0.5:
+                    self.recall += 1
+                self.iou += best_iou
+                #calculate the object loss
+                obj_pred = x_b[0][4][j][i].view(1)
+                self.obj += obj_pred
+                obj_delta = (1 - obj_pred) * self.loss_obj
+                self.loss_obj += obj_delta**2
+                #calculate the class loss
+                classes_pred = x_b[0][(best_n*self.anchor_len + 4):((best_n+1)*self.anchor_len)][j][i].view(self.classes)
+                classes_truth = Variable(torch.zeros(self.classes))
+                classes_truth[class_truth] = 1
+                classes_delta = classes_truth.sub(classes_pred) * self.class_scale
+                self.class_precision += classes_pred[class_truth]
+                if classes_pred[class_truth] > 0.5:
+                    self.precision += 1
+                self.loss_classes += (classes_delta ** 2).sum()
+                #use for statistic 
+                self.count += 1
         self.loss = self.loss_obj + self.loss_noobj + self.loss_coords + self.loss_classes
+        self.AP = self.precision/self.obj_pred_count
+        self.Arecall = self.recall/self.count
+        self.Aiou = self.iou/self.count
+        self.AclassP = self.class_precision/self.count
+        self.Aobj = self.obj/self.count
+        self.Anoobj = self.noobj/ (in_height * in_width * self.num * batch_size)
+        print('Average IoU: %5f, class: %5f, Obj: %5f, No obj: %5f, AP: %5f, Recall: %5f, count: %3d'%(self.Aiou \
+                ,self.AclassP,self.Aobj,self.Anoobj,self.AP,self.Arecall,self.count) )
         return self.loss
