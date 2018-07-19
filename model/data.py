@@ -42,9 +42,16 @@ class YoloDataset(data.Dataset):
         imageDir = self.imageList[index]
         labelDir = self.labelList[index]
         pil_img = Image.open(imageDir)
+        mode = pil_img.mode
+        while mode != 'RGB':
+            index = int(random.random()*self.len)
+            imageDir = self.imageList[index]
+            labelDir = self.labelList[index]
+            pil_img = Image.open(imageDir)
+            mode = pil_img.mode
         transform = T.Compose([T.ToTensor(),T.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5])])
         if self.train:
-            if self.seen%1280 == 0:
+            if (self.seen)%640 == 1 and self.seen > 100:
                 self.width_now = (random.randint(0,9) + 10)*32
                 self.height_now = (random.randint(0,9) + 10)*32
             img = pil_img.resize( (self.width_now, self.height_now) )
@@ -69,14 +76,14 @@ class YoloDataset(data.Dataset):
         else:
             img = pil_img.resize( (self.width, self.height) )
         image = transform(img)
-        label = torch.zeros(40,5)
+        label = torch.zeros(50,5)
         if self.train:
             objs = []
             with open(labelDir,'r') as fl:
                 for line in fl.readlines():
                     obj = line.replace(' \n','').replace('\n','').split(' ')
                     objs.append(obj)
-            for i in range(objs.__len__()):
+            for i in range(min(objs.__len__(), 50) ):
                 #print(objs[i])
                 assert(objs[i].__len__() == 5)
                 label[i][0] = float(objs[i][1])

@@ -22,8 +22,11 @@ class Layer(nn.Module):
         self.output = None
     def forward(self, x, Layers):       
         if self.l_route != 0:
-            self.input = torch.cat( (Layers[self.order + self.l_in].output, Layers[self.order + self.l_route].output), 1)
-            self.output = self.input
+            if self.l_in == 0:
+                self.output = Layers[self.order + self.l_route].output
+            else:
+                self.input = torch.cat( (Layers[self.order + self.l_in].output, Layers[self.order + self.l_route].output), 1)
+                self.output = self.input
         else:
             self.input = x
             if self.l_shortcut != 0:
@@ -148,7 +151,7 @@ def make_route_layers(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, ord
         out_channel = in_channel
         ChannelIn.append(in_channel)
         ChannelOut.append(out_channel)
-        l_route = Layer('route', order, in_channel, out_channel, l_in=l0 )
+        l_route = Layer('route', order, in_channel, out_channel, l_in=0, l_route=l0 )
     elif layers_str.__len__() == 2:
         l0 = int(layers_str[0])
         if l0 > 0:

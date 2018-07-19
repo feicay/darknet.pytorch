@@ -1,33 +1,147 @@
-import torch as t
+import torch
 from torch import nn
 from torch.nn import functional as F
 from . import layer as l
 import re
+import sys
+import numpy as np
 
 class network(nn.Module):
     def __init__(self, layerlist):
         super(network, self).__init__()
         ChannelIn = []
         ChannelOut = []
-        width, height, self.channels, self.lr, self.momentum, self.decay, self.max_batches, self.burn_in, self.policy, self.steps, self.scales = make_input(layerlist[0], ChannelIn, ChannelOut)
-        i = 1
+        self.width, self.height, self.channels, self.lr, self.momentum, self.decay, self.max_batches, self.burn_in, \
+            self.policy, self.steps, self.scales ,self.batch= make_input(layerlist[0], ChannelIn, ChannelOut)
         self.widthList = []
         self.heightList = []
-        self.widthList.append(width)
-        self.heightList.append(height)
+        self.widthList.append(self.width)
+        self.heightList.append(self.height)
         self.layers = []
-        for i in range(layerlist.__len__()):
+        for i in range(1, layerlist.__len__()):
             layer = l.make_layer(layerlist[i], self.widthList, self.heightList, ChannelIn, ChannelOut, i-1)
             self.layers.append(layer)
         self.layerNum = self.layers.__len__()
+        self.seen = 0
+
     def forward(self, x):
         input = x
         for i in range(self.layerNum):
-            output = self.layers[i].forward(input, self.Layers)
+            output = self.layers[i].forward(input, self.layers)
             input = output
         return output
 
+    def init_weights(self):
+        for i in range(self.layerNum):
+            if self.layers[i].name == 'conv':
+                module = self.layers[i].flow
+                if module.__len__() == 2 or module.__len__() == 1:
+                    nn.init.orthogonal_(module[0].weight.data)
+                elif module.__len__() == 3:
+                    nn.init.orthogonal_(module[0].weight.data)
+                else:
+                    pass
+            else:
+                pass
 
+    def load_weights(self, weightFile):
+        fp = open(weightFile, 'rb')
+        if fp is None:
+            print('Can not open weight file!')
+            sys.exit(0)
+        header = np.fromfile(fp, count=4, dtype=np.int32)
+        self.header = torch.from_numpy(header)
+        self.seen = self.header[3]
+        weightData = np.fromfile(fp, dtype = np.float32)
+        fp.close()
+        index = 0
+        for i in range(self.layerNum):
+            if index >= weightData.__len__():
+                break
+            if self.layers[i].name == 'conv':
+                module = self.layers[i].flow
+                if module.__len__() == 2 or module.__len__() == 1:
+                    index = load_conv_weights(weightData, index, module[0])
+                elif module.__len__() == 3:
+                    index = load_conv_bn_weights(weightData, index, module[0], module[1])
+                else:
+                    print(module.__len__())
+                    print("Error convolutional type! Load weights failed")
+                    sys.exit(-2)
+            else:
+                pass
+
+    def save_weights(self, weightFile):
+        fp = open(weightFile, 'wb')
+        self.header[3] = self.seen
+        header = self.header
+        header.numpy().tofile(fp)
+        for i in range(self.layerNum):
+            if self.layers[i].name == 'conv':
+                module = self.layers[i].flow
+                if module.__len__() <= 2:
+                    save_conv_weights(fp, module[0])
+                elif module.__len__() == 3:
+                    save_conv_bn_weights(fp, module[0], module[1])
+                else:
+                    print(module.__len__())
+                    print("Error convolutional type! Save weights failed")
+                    sys.exit(-3)
+            else:
+                pass
+        fp.close()
+
+def load_conv_bn_weights(weightData, index, md_conv, md_bn):
+    len_conv = md_conv.weight.numel()
+    len_bn = md_bn.bias.numel()
+    md_bn.bias.data.copy_( torch.from_numpy( weightData[index:index+len_bn] ) )
+    index = index + len_bn
+    md_bn.weight.data.copy_( torch.from_numpy(weightData[index:index+len_bn]) )
+    index = index + len_bn
+    md_bn.running_mean.copy_( torch.from_numpy(weightData[index:index+len_bn]) )
+    index = index + len_bn
+    md_bn.running_var.copy_( torch.from_numpy(weightData[index:index+len_bn]) )
+    index = index + len_bn
+    md_conv.weight.data.copy_( torch.from_numpy(weightData[index:index+len_conv]).view(md_conv.weight.data.size()) )
+    index = index + len_conv 
+    return index
+
+def load_conv_weights(weightData, index, md_conv):
+    len_conv = md_conv.weight.numel()
+    len_bias = md_conv.bias.numel()
+    md_conv.bias.data.copy_( torch.from_numpy( weightData[index:index+len_bias] ) )
+    index = index + len_bias
+    md_conv.weight.data.copy_( torch.from_numpy(weightData[index:index+len_conv]).view(md_conv.weight.data.size()) )
+    index = index + len_conv 
+    return index
+
+def convert2cpu(gpu_matrix):
+    return torch.FloatTensor(gpu_matrix.size()).copy_(gpu_matrix)
+
+def convert2cpu_long(gpu_matrix):
+    return torch.LongTensor(gpu_matrix.size()).copy_(gpu_matrix)
+
+def save_conv_bn_weights(fp, md_conv, md_bn):
+    if md_bn.bias.is_cuda:
+        convert2cpu(md_bn.bias.data).numpy().tofile(fp)
+        convert2cpu(md_bn.weight.data).numpy().tofile(fp)
+        convert2cpu(md_bn.running_mean).numpy().tofile(fp)
+        convert2cpu(md_bn.running_var).numpy().tofile(fp)
+        convert2cpu(md_conv.weight.data).numpy().tofile(fp)
+    else:
+        md_bn.bias.data.numpy().tofile(fp)
+        md_bn.weight.data.numpy().tofile(fp)
+        md_bn.running_mean.numpy().tofile(fp)
+        md_bn.running_var.numpy().tofile(fp)
+        md_conv.weight.data.numpy().tofile(fp)
+
+def save_conv_weights(fp, md_conv):
+    if md_conv.bias.is_cuda:
+        md_conv(conv_model.bias.data).numpy().tofile(fp)
+        md_conv(conv_model.weight.data).numpy().tofile(fp)
+    else:
+        md_conv.bias.data.numpy().tofile(fp)
+        md_conv.weight.data.numpy().tofile(fp)
 
 def make_input(layercfg, ChannelIn, ChannelOut):
     line = layercfg.split('\n')
@@ -42,6 +156,7 @@ def make_input(layercfg, ChannelIn, ChannelOut):
     p9 = re.compile(r'policy=')
     p10 = re.compile(r'steps=')
     p11 = re.compile(r'scales=')
+    p12 = re.compile(r'batch=')
     width = height = channels = max_batches = burn_in = 0
     lr = momentum = decay = 0.0
     policy = ''
@@ -74,6 +189,8 @@ def make_input(layercfg, ChannelIn, ChannelOut):
             scales_str = re.sub('scales=','',info).split(',')
             for s in scales_str:
                 scales.append( float(s) )
+        if p12.findall(info):
+            batch = int( re.sub('batch=','',info) )
     ChannelIn.append(0)
     ChannelOut.append(channels)
-    return width, height, channels, lr, momentum, decay, max_batches, burn_in, policy, steps, scales
+    return width, height, channels, lr, momentum, decay, max_batches, burn_in, policy, steps, scales, batch

@@ -7,15 +7,18 @@ import re
 import model.network as net
 import model.loss as loss
 import model.data as dat
+import torch.nn as nn
 from torch.utils import data
 
 def parse_args():
     parser = argparse.ArgumentParser(description='train a network')
     parser.add_argument('--dataset',help='training set config file',default='dataset/coco.data',type=str)
     parser.add_argument('--netcfg',help='the network config file',default='cfg/yolov2.cfg',type=str)
-    parser.add_argument('--weight',help='the network weight file',default='weight/yolov3_final.weight',type=str)
+    parser.add_argument('--weight',help='the network weight file',default='weight/yolov2_final.weight',type=str)
     parser.add_argument('--batch',help='training batch size',default=64,type=int)
     parser.add_argument('--vis',help='visdom the training process',default=1,type=int)
+    parser.add_argument('--cuda',help='use the GPU',default=1,type=int)
+    parser.add_argument('--ngpus',help='use mult-gpu',default=1,type=int)
     args = parser.parse_args()
     return args
 
@@ -71,12 +74,36 @@ if __name__ == '__main__':
     print(network.layers[-1].flow[0].anchors)
     criterion = loss.lossYoloV2(network.layers[-1].flow[0])
     #step 2: load network parameters
-
+    network.load_weights(args.weight)
+    if args.cuda:
+        for i in range(network.layerNum):
+                if network.layers[i].name == 'conv' or network.layers[i].name == 'region' or network.layers[i].name == 'yolo':
+                    network.layers[i].flow = network.layers[i].flow.cuda()
+                network.layers[i] = network.layers[i].cuda()
+        network = network.cuda()
+        if args.ngpus:
+            print('use mult-gpu')
+            network = nn.DataParallel(network, device_ids=[0,1,2,3])
+            
+        criterion = criterion.cuda()
     #step 3: load data 
     dataset = dat.YoloDataset(trainlist,416,416)
-    dataloader = data.DataLoader(dataset, batch_size=64, shuffle=1)
+    dataloader = data.DataLoader(dataset, batch_size=args.batch, shuffle=1)
     dataIter = iter(dataloader)
-    imgs, labels = next(dataIter)
-    print(imgs.size())
-    print(labels.size())
+    
+    '''
+    for i in range(100):
+        imgs, labels = next(dataIter)
+        print(i)
+        print(imgs.size())
+        print(labels.size())
+    '''
     #step 4: start train
+    for i in range(10):
+    #for i in range(network.max_batches):
+        imgs, labels = next(dataIter)
+        if args.cuda:
+            imgs = imgs.cuda()
+            labels = labels.cuda()
+        pred = network.forward(imgs)
+        loss = criterion(pred, labels)

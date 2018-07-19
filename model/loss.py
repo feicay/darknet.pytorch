@@ -8,6 +8,8 @@ from . import function as F
 def box_iou(box1, box2):
 #box is a [x,y,w,h] tensor
     w = Variable(torch.Tensor([[1,0,-0.5,0],[0,1,0,-0.5],[1,0,0.5,0],[0,1,0,0.5]]))
+    if box1.is_cuda:
+        w = w.cuda()
     box_a = w.mm(box1.view(4,1))
     box_b = w.mm(box2.view(4,1))
     left = torch.max(box_a[0], box_b[0])
@@ -49,7 +51,6 @@ class lossYoloV2(nn.Module):
         self.anchor_len = self.classes + self.coords + 1
         self.thresh = 0.5
         self.seen = 0
-        print(self.num)
     def forward(self, x, truth):
         batch_size, channels, in_height, in_width = x.size()
         self.seen += 1
@@ -65,21 +66,29 @@ class lossYoloV2(nn.Module):
         self.loss_noobj = 0.0
         self.loss_coords = 0.0
         self.loss_classes = 0.0
+        self.Aiou = 0.0
+        self.AclassP = 0.0
+        self.Aobj = 0.0
+        self.Anoobj = 0.0
+        self.AP = 0.0
+        self.Arecall = 0.0
         for b in range(batch_size):
-            x_b = x[b][:][:][:]
-            truth_b = truth[b][:][:]
+            x_b = x[b, :, :, :]
+            truth_b = truth[b, :, :]
             #get the no object loss
             for j in range(in_height):
                 for i in range(in_width):
                     for n in range(self.num):
-                        box_pred = x_b[0][(n*self.anchor_len):(n*self.anchor_len+4)][j][i]
-                        obj_pred = x_b[0][4][j][i]
+                        idx = n * self.anchor_len
+                        idx_end = idx + 4
+                        box_pred = x_b[idx:idx_end, j, i]
+                        obj_pred = x_b[4, j, i]
                         best_iou = 0.0
-                        for t in range(30):
-                            box_truth = truth_b[0][t][0:4]
+                        for t in range(50):
+                            box_truth = truth_b[t, 0:4]
                             if box_truth[2] < 0.00001:
                                 break
-                            iou = box_iou(box_pred.view(4,1), box_truth.view(4,1))
+                            iou = box_iou(box_pred, box_truth)
                             if iou > best_iou:
                                 best_iou = iou
                         if best_iou < self.thresh:
@@ -98,11 +107,13 @@ class lossYoloV2(nn.Module):
                             tw = 0
                             th = 0
                             box_t = Variable(torch.Tensor([tx,ty,tw,th]))
+                            if x.is_cuda:
+                                box_t = box_t.cuda()
                             box_delta = box_t.sub(box_pred.view(4)) * 0.01
                             self.loss_coords += (box_delta**2).sum()
-            for t in range(30):
-                box_truth = truth_b[0][t][0:4].view(4,1)
-                class_truth = int( truth_b[0][t][4].view(1) )
+            for t in range(50):
+                box_truth = truth_b[t, 0:4].view(4,1)
+                class_truth = int( truth_b[t, 4].view(1) )
                 if box_truth[2] < 0.00001:
                     break
                 best_iou = 0.0
@@ -114,7 +125,7 @@ class lossYoloV2(nn.Module):
                 box_truth_shift[0] = 0.0
                 box_truth_shift[1] = 0.0
                 for n in range(self.num):
-                    box_pred = x_b[0][(n*self.anchor_len):(n*self.anchor_len+4)][j][i].view(4,1)
+                    box_pred = x_b[(n*self.anchor_len):(n*self.anchor_len+4), j, i].view(4,1)
                     box_pred_shift = box_pred
                     box_pred_shift[0] = 0.0
                     box_pred_shift[1] = 0.0
@@ -129,21 +140,25 @@ class lossYoloV2(nn.Module):
                 tw = torch.log( box_truth[2] * in_width / self.anchors[2*n] )
                 th = torch.log( box_truth[3] * in_height / self.anchors[2*n + 1] )
                 box_t = Variable(torch.Tensor([tx,ty,tw,th]))
-                box_best = x_b[0][(best_n*self.anchor_len):(best_n*self.anchor_len+4)][j][i].view(4,1)
+                if x.is_cuda:
+                    box_t = box_t.cuda()
+                box_best = x_b[(best_n*self.anchor_len):(best_n*self.anchor_len+4), j, i].view(4,1)
                 box_delta = box_t.sub(box_best.view(4)) * loss_box_scale
                 self.loss_coords += (box_delta**2).sum()
                 if iou > 0.5:
                     self.recall += 1
                 self.iou += best_iou
                 #calculate the object loss
-                obj_pred = x_b[0][4][j][i].view(1)
+                obj_pred = x_b[4][j][i].view(1)
                 self.obj += obj_pred
                 obj_delta = (1 - obj_pred) * self.loss_obj
                 self.loss_obj += obj_delta**2
                 #calculate the class loss
-                classes_pred = x_b[0][(best_n*self.anchor_len + 4):((best_n+1)*self.anchor_len)][j][i].view(self.classes)
+                classes_pred = x_b[(best_n*self.anchor_len + 5):((best_n+1)*self.anchor_len), j, i].view(self.classes)
                 classes_truth = Variable(torch.zeros(self.classes))
                 classes_truth[class_truth] = 1
+                if x.is_cuda:
+                    classes_truth = classes_truth.cuda()
                 classes_delta = classes_truth.sub(classes_pred) * self.class_scale
                 self.class_precision += classes_pred[class_truth]
                 if classes_pred[class_truth] > 0.5:
@@ -151,13 +166,15 @@ class lossYoloV2(nn.Module):
                 self.loss_classes += (classes_delta ** 2).sum()
                 #use for statistic 
                 self.count += 1
-        self.loss = self.loss_obj + self.loss_noobj + self.loss_coords + self.loss_classes
-        self.AP = self.precision/self.obj_pred_count
-        self.Arecall = self.recall/self.count
-        self.Aiou = self.iou/self.count
-        self.AclassP = self.class_precision/self.count
-        self.Aobj = self.obj/self.count
-        self.Anoobj = self.noobj/ (in_height * in_width * self.num * batch_size)
+        if self.count != 0:
+            self.loss = self.loss_obj + self.loss_noobj + self.loss_coords + self.loss_classes
+            if self.obj_pred_count != 0:
+                self.AP = self.precision/self.obj_pred_count
+            self.Arecall = self.recall/self.count
+            self.Aiou = self.iou/self.count
+            self.AclassP = self.class_precision/self.count
+            self.Aobj = self.obj/self.count
+            self.Anoobj = self.noobj/ (in_height * in_width * self.num * batch_size)
         print('Average IoU: %5f, class: %5f, Obj: %5f, No obj: %5f, AP: %5f, Recall: %5f, count: %3d'%(self.Aiou \
                 ,self.AclassP,self.Aobj,self.Anoobj,self.AP,self.Arecall,self.count) )
         return self.loss
