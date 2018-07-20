@@ -9,16 +9,18 @@ import model.loss as loss
 import model.data as dat
 import torch.nn as nn
 from torch.utils import data
+import torch.optim as optim
+import time
 
 def parse_args():
     parser = argparse.ArgumentParser(description='train a network')
     parser.add_argument('--dataset',help='training set config file',default='dataset/coco.data',type=str)
     parser.add_argument('--netcfg',help='the network config file',default='cfg/yolov2.cfg',type=str)
     parser.add_argument('--weight',help='the network weight file',default='weight/yolov2_final.weight',type=str)
-    parser.add_argument('--batch',help='training batch size',default=64,type=int)
+    parser.add_argument('--batch',help='training batch size',default=16,type=int)
     parser.add_argument('--vis',help='visdom the training process',default=1,type=int)
     parser.add_argument('--cuda',help='use the GPU',default=1,type=int)
-    parser.add_argument('--ngpus',help='use mult-gpu',default=1,type=int)
+    parser.add_argument('--ngpus',help='use mult-gpu',default=0,type=int)
     args = parser.parse_args()
     return args
 
@@ -75,16 +77,21 @@ if __name__ == '__main__':
     criterion = loss.lossYoloV2(network.layers[-1].flow[0])
     #step 2: load network parameters
     network.load_weights(args.weight)
+    layerNum = network.layerNum
     if args.cuda:
-        for i in range(network.layerNum):
-                if network.layers[i].name == 'conv' or network.layers[i].name == 'region' or network.layers[i].name == 'yolo':
-                    network.layers[i].flow = network.layers[i].flow.cuda()
-                network.layers[i] = network.layers[i].cuda()
         network = network.cuda()
+        '''
+        for i in range(network.layerNum):
+            network.layers[i] = network.layers[i].cuda()
+            if network.layers[i].name == 'conv' or network.layers[i].name == 'region' or network.layers[i].name == 'yolo':
+                network.layers[i].flow = network.layers[i].flow.cuda()     
+                '''
         if args.ngpus:
             print('use mult-gpu')
-            network = nn.DataParallel(network, device_ids=[0,1,2,3])
-            
+            network = nn.DataParallel(network, device_ids=[0,1,2,3] ).cuda()
+            #for i in range(layerNum):
+                #network.layers[i] = nn.DataParallel(network.layers[i], device_ids=[0,1,2,3])
+   
         criterion = criterion.cuda()
     #step 3: load data 
     dataset = dat.YoloDataset(trainlist,416,416)
@@ -98,12 +105,25 @@ if __name__ == '__main__':
         print(imgs.size())
         print(labels.size())
     '''
-    #step 4: start train
+    #step 4: define optimizer
+    optimizer = optim.Adam(network.parameters())
+    #step 5: start train
+    print('start training...')
+    t_start = time.time()
     for i in range(10):
     #for i in range(network.max_batches):
         imgs, labels = next(dataIter)
         if args.cuda:
-            imgs = imgs.cuda()
-            labels = labels.cuda()
+            imgs = imgs.cuda(async=True)
+            labels = labels.cuda(async=True)
+        t0 = time.time()
         pred = network.forward(imgs)
+        t1 = time.time()
         loss = criterion(pred, labels)
+        t2 = time.time() 
+        '''
+        optimizer.zero_grad()
+        loss.backword()
+        t3 = time.time()
+        '''
+        print('forward time: %f, loss time: %f'%((t1-t0),(t2-t1)))

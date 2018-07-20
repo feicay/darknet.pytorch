@@ -22,12 +22,31 @@ class network(nn.Module):
             layer = l.make_layer(layerlist[i], self.widthList, self.heightList, ChannelIn, ChannelOut, i-1)
             self.layers.append(layer)
         self.layerNum = self.layers.__len__()
+        self.models = nn.ModuleList()
+        self.module_num = 0
+        for i in range(self.layerNum):
+            if self.layers[i].flow is not None:
+                self.models.append(self.layers[i].flow)
+                self.module_num += 1
         self.seen = 0
 
     def forward(self, x):
         input = x
+        id_module = 0
         for i in range(self.layerNum):
-            output = self.layers[i].forward(input, self.layers)
+            if self.layers[i].name == 'route':
+                if self.layers[i].l_in == 0:
+                    output = self.layers[i + self.layers[i].l_route].output
+                else:
+                    input = torch.cat( (self.layers[i + self.layers[i].l_in].output, self.layers[i + self.layers[i].l_route].output), 1)
+                    output = input
+            elif self.layers[i].name == 'shortcut':
+                output = input + self.layers[i + self.layers[i].l_shortcut].output
+            else:
+                output = self.models[id_module](input)
+                id_module += 1
+            self.layers[i].input = input
+            self.layers[i].output = output
             input = output
         return output
 

@@ -13,6 +13,7 @@ class Layer(nn.Module):
         self.order = order
         self.in_channel = in_channel
         self.out_channel = out_channel
+        self.flow = None
         if layers:
             self.flow = nn.Sequential(*layers)
         self.l_in = l_in
@@ -20,6 +21,7 @@ class Layer(nn.Module):
         self.l_shortcut = l_shortcut
         self.input = None
         self.output = None
+    '''
     def forward(self, x, Layers):       
         if self.l_route != 0:
             if self.l_in == 0:
@@ -32,8 +34,10 @@ class Layer(nn.Module):
             if self.l_shortcut != 0:
                 self.output = self.input + Layers[self.order + self.l_shortcut].output
             else:
-                self.output = self.flow(self.input)
+                #self.output = self.flow(self.input)
+                pass
         return self.output
+    '''
 
         
 def make_conv_layers(cfglist, widthlist, heightlist, ChannelIn, ChannelOut, order):
