@@ -10,6 +10,7 @@ import model.data as dat
 import torch.nn as nn
 from torch.utils import data
 import torch.optim as optim
+from torch.autograd import Variable
 import time
 
 def parse_args():
@@ -74,7 +75,7 @@ if __name__ == '__main__':
     print('the depth of the network is %d'%(layerList.__len__()-1))
     network = net.network(layerList)
     print(network.layers[-1].flow[0].anchors)
-    criterion = loss.lossYoloV2(network.layers[-1].flow[0])
+    criterion = loss.CostYoloV2(network.layers[-1].flow[0])
     #step 2: load network parameters
     network.load_weights(args.weight)
     layerNum = network.layerNum
@@ -114,16 +115,18 @@ if __name__ == '__main__':
     #for i in range(network.max_batches):
         imgs, labels = next(dataIter)
         if args.cuda:
-            imgs = imgs.cuda(async=True)
-            labels = labels.cuda(async=True)
+            imgs = Variable( imgs.cuda() , requires_grad=True)
+            labels = Variable( labels.cuda())
         t0 = time.time()
         pred = network.forward(imgs)
+        print(pred.requires_grad)
         t1 = time.time()
-        loss = criterion(pred, labels)
+        cost = criterion(pred, labels)
+        print(cost.requires_grad)
         t2 = time.time() 
-        '''
+        print(cost)
         optimizer.zero_grad()
-        loss.backword()
+        cost.backword()
         t3 = time.time()
-        '''
+        
         print('forward time: %f, loss time: %f'%((t1-t0),(t2-t1)))

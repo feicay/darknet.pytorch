@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.autograd import Variable
 from . import layer as l
 import re
 import sys
@@ -38,7 +39,7 @@ class network(nn.Module):
                 if self.layers[i].l_in == 0:
                     output = self.layers[i + self.layers[i].l_route].output
                 else:
-                    input = torch.cat( (self.layers[i + self.layers[i].l_in].output, self.layers[i + self.layers[i].l_route].output), 1)
+                    input = Variable(torch.cat( (self.layers[i + self.layers[i].l_in].output, self.layers[i + self.layers[i].l_route].output), 1), requires_grad=True)
                     output = input
             elif self.layers[i].name == 'shortcut':
                 output = input + self.layers[i + self.layers[i].l_shortcut].output
