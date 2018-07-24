@@ -74,59 +74,40 @@ if __name__ == '__main__':
     layer = []
     print('the depth of the network is %d'%(layerList.__len__()-1))
     network = net.network(layerList)
-    print(network.layers[-1].flow[0].anchors)
     criterion = loss.CostYoloV2(network.layers[-1].flow[0])
     #step 2: load network parameters
     network.load_weights(args.weight)
     layerNum = network.layerNum
     if args.cuda:
-        network = network.cuda()
-        '''
-        for i in range(network.layerNum):
-            network.layers[i] = network.layers[i].cuda()
-            if network.layers[i].name == 'conv' or network.layers[i].name == 'region' or network.layers[i].name == 'yolo':
-                network.layers[i].flow = network.layers[i].flow.cuda()     
-                '''
         if args.ngpus:
             print('use mult-gpu')
-            network = nn.DataParallel(network, device_ids=[0,1,2,3] ).cuda()
-            #for i in range(layerNum):
-                #network.layers[i] = nn.DataParallel(network.layers[i], device_ids=[0,1,2,3])
-   
-        criterion = criterion.cuda()
+            network = nn.DataParallel(network).cuda() 
+        else:
+            network = network.cuda()
     #step 3: load data 
     dataset = dat.YoloDataset(trainlist,416,416)
     dataloader = data.DataLoader(dataset, batch_size=args.batch, shuffle=1)
     dataIter = iter(dataloader)
-    
-    '''
-    for i in range(100):
-        imgs, labels = next(dataIter)
-        print(i)
-        print(imgs.size())
-        print(labels.size())
-    '''
     #step 4: define optimizer
     optimizer = optim.Adam(network.parameters())
     #step 5: start train
     print('start training...')
     t_start = time.time()
-    for i in range(10):
+    for i in range(5):
     #for i in range(network.max_batches):
         imgs, labels = next(dataIter)
+        imgs = Variable( imgs, requires_grad=True)
+        labels =  Variable(labels)
         if args.cuda:
-            imgs = Variable( imgs.cuda() , requires_grad=True)
-            labels = Variable( labels.cuda())
+            imgs =  imgs.cuda()
+            labels =  labels.cuda()
         t0 = time.time()
         pred = network.forward(imgs)
-        print(pred.requires_grad)
         t1 = time.time()
         cost = criterion(pred, labels)
-        print(cost.requires_grad)
         t2 = time.time() 
-        print(cost)
         optimizer.zero_grad()
-        cost.backword()
+        cost.backward()
         t3 = time.time()
         
-        print('forward time: %f, loss time: %f'%((t1-t0),(t2-t1)))
+        print('forward time: %f, loss time: %f, backward time: %f'%((t1-t0),(t2-t1),(t3-t2)))

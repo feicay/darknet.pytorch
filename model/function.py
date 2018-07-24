@@ -2,7 +2,7 @@ import torch as t
 from torch import nn
 from torch.nn import functional as F
 from torch.autograd import Function
-'''
+
 class reorg(nn.Module):
     def __init__(self, stride):
         super(reorg, self).__init__()
@@ -15,6 +15,7 @@ class reorg(nn.Module):
         input_view = x.contiguous().view(batch_size, channels, out_height, self.stride, out_width, self.stride)
         shuffle_out = input_view.permute(0,1,3,5,2,4).contiguous()
         return shuffle_out.view(batch_size, ChannelOut, out_height, out_width)
+'''
     def backward(self, x):
         batch_size, channels, in_height, in_width = x.size()
         ChannelOut = channels/(self.stride)/(self.stride)
@@ -23,6 +24,7 @@ class reorg(nn.Module):
         input_view = x.contiguous().view(batch_size, ChannelOut, self.stride, self.stride, in_height, in_width)
         shuffle_out = input_view.permute(0,1,4,2,5,3).contiguous()
         return shuffle_out.view(batch_size, ChannelOut, out_height, out_width)
+'''
 '''
 def reorgFunc(x, stride):
     batch_size, channels, in_height, in_width = x.size()
@@ -39,6 +41,7 @@ class reorg(nn.Module):
         self.stride = stride
     def forward(self, x):
         return reorgFunc(x, self.stride)
+'''
 #the output on the channel dim is [x,y,w,h,C,c0,c1,...,cn], the 1th dim of the Tensor(batch x channel x height x width) 
 #(x,y,w,h) is the coords, C is the confidence of is_object, c0,c1 ... cn is the classes confidence
 class region(nn.Module):
@@ -55,6 +58,7 @@ class region(nn.Module):
         self.coord_scale = coord_scale
         self.anchors = anchors
     def forward(self, x):
+        outlist = []
         batch_size, channels, in_height, in_width = x.size()
         i = 0
         len_per_anchor = self.coords + 1 + self.classes
@@ -84,10 +88,8 @@ class region(nn.Module):
             v3 = t.index_select(v, 1, index3)
             out3 = F.softmax(v3, 1)
             out_buf = t.cat( (out1, out_wh, out2, out3), 1)
-            if i == 0:
-                output = out_buf
-            else:
-                output = t.cat((output, out_buf), 1)
+            outlist.append(out_buf)
+            output = t.cat(outlist, 1)
         return output
         
 class yolo(nn.Module):
