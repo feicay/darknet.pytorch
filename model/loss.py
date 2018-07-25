@@ -5,6 +5,7 @@ from torch.autograd import Function
 from torch.autograd import Variable
 from . import function as F
 import time
+import copy
 
 def box_iou(box1, box2):
 #box is a [x,y,w,h] tensor
@@ -285,27 +286,28 @@ class CostYoloV2(nn.Module):
             self.loss_classes = self.loss_classes.cuda()
             self.loss = self.loss.cuda()
         mse = nn.MSELoss(size_average=False)
-        cost1 = 0.0
-        cost2 = 0.0
         for b in range(batch_size):
             x_b = x[b, :, :, :]
             truth_b = truth[b, :, :]
             truth_tensor_list = []
             obj_pred_list = []
             coords_pred_list = []
-            t0 = time.time()
             #get the no object loss
             for n in range(self.num):
                 idx = n * self.anchor_len
                 idx_end = idx + 4
                 box_pred = x_b[idx:idx_end, :, :]
+                box_pred = box_pred.clone()
                 obj_pred = x_b[4, :, :]
+                obj_pred = obj_pred.clone()
                 box_truth = truth_b[:, 0:4]
+                box_truth = box_truth.clone()
                 box_pred_v = box_pred.permute(1,2,0).contiguous().view(in_height*in_width, 4)
                 coords_pred_list.append(box_pred_v.view(1, in_height*in_width, 4))
                 iou, idx_t = box_iou_truth(box_pred_v, box_truth)
                 iou = iou.view(in_height, in_width)
                 truth_tensor_noobj = iou.sub(self.thresh).sign()
+                self.noobj += (in_height * in_width - truth_tensor_noobj.sum())
                 truth_tensor_noobj = torch.max(truth_tensor_noobj, zeros)
                 truth_tensor = obj_pred.mul(truth_tensor_noobj).view(1, in_height, in_width)
                 obj_pred_list.append(obj_pred.view(1, in_height, in_width))
@@ -323,8 +325,6 @@ class CostYoloV2(nn.Module):
                 box_t = box_t.detach()
                 self.loss_coords = mse(coords_pred, box_t) * 0.01
             #get object , coords and classes loss    
-            t1 = time.time()
-            cost1 += t1 - t0
             
             for t in range(50):
                 box_truth = truth_b[t, 0:4].view(4)
@@ -337,11 +337,13 @@ class CostYoloV2(nn.Module):
                 j = int(box_truth[1] * in_height)
                 #find the best iou for the current label
                 box_truth_shift = box_truth
+                box_truth_shift = box_truth_shift.clone()
                 box_truth_shift[0] = 0.0
                 box_truth_shift[1] = 0.0
                 box_pred_shift_l = []
                 for n in range(self.num):
                     box_pred = x_b[(n*self.anchor_len):(n*self.anchor_len+4), j, i].view(4)
+                    box_pred = box_pred.clone()
                     box_pred_shift = box_pred
                     box_pred_shift[0] = 0.0
                     box_pred_shift[1] = 0.0
@@ -360,9 +362,6 @@ class CostYoloV2(nn.Module):
                 if x.is_cuda:
                     box_t = box_t.cuda()
                 box_best = x_b[(best_n*self.anchor_len):(best_n*self.anchor_len+4), j, i].view(1,4)
-                print('box')
-                print(box_t)
-                print(box_best)
                 box_delta = box_t.sub(box_best).mul(loss_box_scale) 
                 self.loss_coords += (box_delta**2).sum()
                 if iou > 0.5:
@@ -379,15 +378,14 @@ class CostYoloV2(nn.Module):
                 classes_truth[class_truth] = 1
                 if x.is_cuda:
                     classes_truth = classes_truth.cuda()
-                classes_delta = classes_truth.sub(classes_pred) * self.class_scale
+                #classes_delta = classes_truth.sub(classes_pred) * self.class_scale
                 self.class_precision += classes_pred[class_truth]
                 if classes_pred[class_truth] > 0.5:
                     self.precision += 1
-                self.loss_classes += (classes_delta ** 2).sum()
+                #self.loss_classes += (classes_delta ** 2).sum()
+                self.loss_classes += self.class_scale * mse(classes_pred, classes_truth)
                 #use for statistic 
                 self.count += 1
-            t2 = time.time()
-            cost2 += t2 - t1
         if self.count != 0:
             self.loss = self.loss_obj + self.loss_noobj + self.loss_coords + self.loss_classes
             self.Arecall = self.recall/self.count
@@ -398,5 +396,4 @@ class CostYoloV2(nn.Module):
         print('loss: %f, average IoU: %f, class: %f, Obj: %f, No obj: %f,  Recall: %f, count: %3d'%(self.loss,self.Aiou \
                 ,self.AclassP,self.Aobj,self.Anoobj,self.Arecall,self.count) )
         print('loss_obj=%f, loss_noobj=%f, loss_coords=%f, loss_classes=%f, loss=%f'%(self.loss_obj, self.loss_noobj, self.loss_coords, self.loss_classes, self.loss, ) )
-        print('cost time1: %f, time2: %f'%(cost1,cost2))
         return self.loss

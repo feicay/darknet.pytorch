@@ -14,8 +14,10 @@ class Layer(nn.Module):
         self.in_channel = in_channel
         self.out_channel = out_channel
         self.flow = None
+        self.have_flow = 0
         if layers:
             self.flow = nn.Sequential(*layers)
+            self.have_flow = 1
         self.l_in = l_in
         self.l_route = l_route
         self.l_shortcut = l_shortcut

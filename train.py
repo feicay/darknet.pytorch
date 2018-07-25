@@ -18,10 +18,10 @@ def parse_args():
     parser.add_argument('--dataset',help='training set config file',default='dataset/coco.data',type=str)
     parser.add_argument('--netcfg',help='the network config file',default='cfg/yolov2.cfg',type=str)
     parser.add_argument('--weight',help='the network weight file',default='weight/yolov2_final.weight',type=str)
-    parser.add_argument('--batch',help='training batch size',default=16,type=int)
+    parser.add_argument('--batch',help='training batch size',default=64,type=int)
     parser.add_argument('--vis',help='visdom the training process',default=1,type=int)
     parser.add_argument('--cuda',help='use the GPU',default=1,type=int)
-    parser.add_argument('--ngpus',help='use mult-gpu',default=0,type=int)
+    parser.add_argument('--ngpus',help='use mult-gpu',default=1,type=int)
     args = parser.parse_args()
     return args
 
@@ -76,12 +76,13 @@ if __name__ == '__main__':
     network = net.network(layerList)
     criterion = loss.CostYoloV2(network.layers[-1].flow[0])
     #step 2: load network parameters
-    network.load_weights(args.weight)
+    #network.load_weights(args.weight)
+    network.init_weights()
     layerNum = network.layerNum
     if args.cuda:
         if args.ngpus:
             print('use mult-gpu')
-            network = nn.DataParallel(network).cuda() 
+            network = nn.DataParallel(network).cuda()         
         else:
             network = network.cuda()
     #step 3: load data 
@@ -89,25 +90,27 @@ if __name__ == '__main__':
     dataloader = data.DataLoader(dataset, batch_size=args.batch, shuffle=1)
     dataIter = iter(dataloader)
     #step 4: define optimizer
-    optimizer = optim.Adam(network.parameters())
+    optimizer = optim.Adam(network.parameters(),lr=0.0001)
     #step 5: start train
     print('start training...')
     t_start = time.time()
-    for i in range(5):
+    for i in range(100):
     #for i in range(network.max_batches):
         imgs, labels = next(dataIter)
-        imgs = Variable( imgs, requires_grad=True)
+        imgs = Variable( imgs)
         labels =  Variable(labels)
         if args.cuda:
             imgs =  imgs.cuda()
             labels =  labels.cuda()
+        #forward propagate
+        optimizer.zero_grad()
         t0 = time.time()
         pred = network.forward(imgs)
         t1 = time.time()
         cost = criterion(pred, labels)
         t2 = time.time() 
-        optimizer.zero_grad()
         cost.backward()
         t3 = time.time()
-        
-        print('forward time: %f, loss time: %f, backward time: %f'%((t1-t0),(t2-t1),(t3-t2)))
+        optimizer.step()
+        t4 = time.time()
+        print('forward time: %f, loss time: %f, backward time: %f, update time: %f'%((t1-t0),(t2-t1),(t3-t2),(t4-t3)))

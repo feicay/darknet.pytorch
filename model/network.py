@@ -26,30 +26,28 @@ class network(nn.Module):
         self.models = nn.ModuleList()
         self.module_num = 0
         for i in range(self.layerNum):
-            if self.layers[i].flow is not None:
-                self.models.append(self.layers[i].flow)
-                self.module_num += 1
+            self.models.append(self.layers[i].flow)
+            self.module_num += self.layers[i].have_flow
         self.seen = 0
 
     def forward(self, x):
         input = x
-        id_module = 0
+        self.output = []
         for i in range(self.layerNum):
             if self.layers[i].name == 'route':
                 if self.layers[i].l_in == 0:
-                    output = self.layers[i + self.layers[i].l_route].output
+                    output = self.output[i + self.layers[i].l_route]
                 else:
-                    input = torch.cat( (self.layers[i + self.layers[i].l_in].output, self.layers[i + self.layers[i].l_route].output), 1)
+                    input = torch.cat( (self.output[i + self.layers[i].l_in], self.output[i + self.layers[i].l_route]), 1)
                     output = input
             elif self.layers[i].name == 'shortcut':
-                output = input + self.layers[i + self.layers[i].l_shortcut].output
+                output = input + self.output[i + self.layers[i].l_shortcut]
             else:
-                output = self.models[id_module](input)
-                id_module += 1
-            self.layers[i].input = input
-            self.layers[i].output = output
+                output = self.models[i](input)
+            self.output.append( output.clone() )
             input = output
         return output
+
 
     def init_weights(self):
         for i in range(self.layerNum):
@@ -214,3 +212,23 @@ def make_input(layercfg, ChannelIn, ChannelOut):
     ChannelIn.append(0)
     ChannelOut.append(channels)
     return width, height, channels, lr, momentum, decay, max_batches, burn_in, policy, steps, scales, batch
+
+    '''
+    def forward(self, x):
+        input = x
+        for i in range(self.layerNum):
+            if self.layers[i].name == 'route':
+                if self.layers[i].l_in == 0:
+                    output = self.layers[i + self.layers[i].l_route].output
+                else:
+                    input = torch.cat( (self.layers[i + self.layers[i].l_in].output, self.layers[i + self.layers[i].l_route].output), 1)
+                    output = input
+            elif self.layers[i].name == 'shortcut':
+                output = input + self.layers[i + self.layers[i].l_shortcut].output
+            else:
+                output = self.models[i](input)
+            self.layers[i].input = input
+            self.layers[i].output = output
+            input = output
+        return output
+        '''
