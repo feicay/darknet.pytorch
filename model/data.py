@@ -52,8 +52,9 @@ class YoloDataset(data.Dataset):
         transform = T.Compose([T.ToTensor(),T.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5])])
         if self.train:
             if (self.seen)%640 == 1 and self.seen > 100:
-                self.width_now = (random.randint(0,9) + 10)*32
-                self.height_now = self.width_now
+                self.width_now = (random.randint(0,6) + 10)*32
+                self.height_now = (random.randint(0,6) + 10)*32
+                print('resizing input %d x %d'%(self.width_now,self.height_now))
             img = pil_img.resize( (self.width_now, self.height_now) )
             if self.data_expand:
                 #Brightness,Color,Contrast,Sharpness range from 0.5~1.5

@@ -93,7 +93,7 @@ class lossYoloV2(nn.Module):
         self.loss_classes = 0.0
         self.loss = 0.0
         self.anchors = RegionLayer.anchors
-        self.object_scale = RegionLayer.object_scale
+        self.object_scale = RegionLayer.object_scale * 2
         self.noobject_scale = RegionLayer.noobject_scale
         self.class_scale = RegionLayer.class_scale
         self.coord_scale = RegionLayer.coord_scale
@@ -286,12 +286,17 @@ class CostYoloV2(nn.Module):
             self.loss_classes = self.loss_classes.cuda()
             self.loss = self.loss.cuda()
         mse = nn.MSELoss(size_average=False)
+        truth_noobj_list = []
+        noobj_pred_list = []
+        coords_pred_list = []
+        box_pred_list = []
+        box_truth_list = []
+        obj_pred_list = []
+        classes_pred_list = []
+        classes_truth_list = []
         for b in range(batch_size):
             x_b = x[b, :, :, :]
-            truth_b = truth[b, :, :]
-            truth_tensor_list = []
-            obj_pred_list = []
-            coords_pred_list = []
+            truth_b = truth[b, :, :]           
             #get the no object loss
             for n in range(self.num):
                 idx = n * self.anchor_len
@@ -307,25 +312,12 @@ class CostYoloV2(nn.Module):
                 iou, idx_t = box_iou_truth(box_pred_v, box_truth)
                 iou = iou.view(in_height, in_width)
                 truth_tensor_noobj = iou.sub(self.thresh).sign()
-                self.noobj += (in_height * in_width - truth_tensor_noobj.sum())
                 truth_tensor_noobj = torch.max(truth_tensor_noobj, zeros)
+                self.noobj += (in_height * in_width - truth_tensor_noobj.sum())
                 truth_tensor = obj_pred.mul(truth_tensor_noobj).view(1, in_height, in_width)
-                obj_pred_list.append(obj_pred.view(1, in_height, in_width))
-                truth_tensor_list.append(truth_tensor)
-                #self.loss_noobj += nn.MSELoss(size_average=False)(truth_tensor, obj_pred)
-            noobj_truth = torch.cat(truth_tensor_list, 0)
-            noobj_pred = torch.cat(obj_pred_list, 0)
-            noobj_truth = noobj_truth.detach()
-            self.loss_noobj = mse(noobj_pred, noobj_truth)
-            if self.seen < 500:
-                box_t = Variable(torch.Tensor([0.5,0.5,0,0])).expand(in_height*in_width, 4).expand(self.num, in_height*in_width, 4)
-                if x.is_cuda:
-                    box_t = box_t.cuda()
-                coords_pred = torch.cat(coords_pred_list, 0)
-                box_t = box_t.detach()
-                self.loss_coords = mse(coords_pred, box_t) * 0.01
+                noobj_pred_list.append(obj_pred.view(1, in_height, in_width))
+                truth_noobj_list.append(truth_tensor)
             #get object , coords and classes loss    
-            
             for t in range(50):
                 box_truth = truth_b[t, 0:4].view(4)
                 class_truth = int( truth_b[t, 4].view(1) )
@@ -351,9 +343,6 @@ class CostYoloV2(nn.Module):
                 box_pred_shift = torch.cat(box_pred_shift_l, 0)
                 iou, best_n = box_iou_truth(box_truth_shift.view(1,4), box_pred_shift )
                 #calculate the coords loss
-                sq_truth = box_truth[2].mul(box_truth[3])
-                loss_box_scale =  one.mul(2).sub(sq_truth)
-                loss_box_scale = loss_box_scale.mul(self.coord_scale)
                 tx = (box_truth[0] + i) / in_width 
                 ty = (box_truth[1] + j) / in_height
                 tw = torch.exp( box_truth[2]) * self.anchors[2*n] /in_width
@@ -362,30 +351,53 @@ class CostYoloV2(nn.Module):
                 if x.is_cuda:
                     box_t = box_t.cuda()
                 box_best = x_b[(best_n*self.anchor_len):(best_n*self.anchor_len+4), j, i].view(1,4)
-                box_delta = box_t.sub(box_best).mul(loss_box_scale) 
-                self.loss_coords += (box_delta**2).sum()
+                box_pred_list.append(box_best)
+                box_truth_list.append(box_t)
                 if iou > 0.5:
                     self.recall += 1
                 self.iou += iou
                 #calculate the object loss
-                obj_pred = x_b[4][j][i].view(1)
+                obj_pred = x_b[4,j,i].view(1)
                 self.obj += obj_pred
-                obj_delta = 1 - obj_pred
-                self.loss_obj += obj_delta**2
+                obj_pred_list.append(obj_pred)
                 #calculate the class loss
                 classes_pred = x_b[(best_n*self.anchor_len + 5):((best_n+1)*self.anchor_len), j, i].view(self.classes)
                 classes_truth = Variable(torch.zeros(self.classes))
                 classes_truth[class_truth] = 1
                 if x.is_cuda:
                     classes_truth = classes_truth.cuda()
-                #classes_delta = classes_truth.sub(classes_pred) * self.class_scale
+                classes_truth_list.append(classes_truth.view(1,self.classes))
+                classes_pred_list.append(classes_pred.view(1,self.classes))
                 self.class_precision += classes_pred[class_truth]
                 if classes_pred[class_truth] > 0.5:
                     self.precision += 1
-                #self.loss_classes += (classes_delta ** 2).sum()
-                self.loss_classes += self.class_scale * mse(classes_pred, classes_truth)
                 #use for statistic 
                 self.count += 1
+        noobj_truth = torch.cat(truth_noobj_list, 0)
+        noobj_pred = torch.cat(noobj_pred_list, 0)
+        noobj_truth = noobj_truth.detach()
+        self.loss_noobj += mse(noobj_pred, noobj_truth)
+        if self.seen < 500:
+            box_t = Variable(torch.Tensor([0.5,0.5,0,0])).expand(in_height*in_width, 4).expand(self.num*batch_size, in_height*in_width, 4)
+            if x.is_cuda:
+                box_t = box_t.cuda()
+            coords_pred = torch.cat(coords_pred_list, 0)
+            box_t = box_t.detach()
+            self.loss_coords = mse(coords_pred, box_t) * 0.01
+        pred_box = torch.cat(box_pred_list, 0)
+        truth_box = torch.cat(box_truth_list, 0)
+        pred_obj = torch.cat(obj_pred_list, 0)
+        truth_obj = torch.ones(self.count)
+        if x.is_cuda:
+            truth_obj = truth_obj.cuda()
+        pred_classes = torch.cat(classes_pred_list, 0)
+        truth_classes = torch.cat(classes_truth_list, 0)
+        truth_box = truth_box.detach()
+        self.loss_coords += mse(pred_box, truth_box) * self.coord_scale
+        truth_obj = truth_obj.detach()
+        self.loss_obj = mse(pred_obj, truth_obj) * self.object_scale
+        truth_classes = truth_classes.detach()
+        self.loss_classes = mse(pred_classes, truth_classes) * self.class_scale
         if self.count != 0:
             self.loss = self.loss_obj + self.loss_noobj + self.loss_coords + self.loss_classes
             self.Arecall = self.recall/self.count

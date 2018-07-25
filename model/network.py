@@ -44,7 +44,7 @@ class network(nn.Module):
                 output = input + self.output[i + self.layers[i].l_shortcut]
             else:
                 output = self.models[i](input)
-            self.output.append( output.clone() )
+            self.output.append( output )
             input = output
         return output
 

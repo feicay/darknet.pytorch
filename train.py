@@ -12,6 +12,8 @@ from torch.utils import data
 import torch.optim as optim
 from torch.autograd import Variable
 import time
+import visdom
+import numpy as np
 
 def parse_args():
     parser = argparse.ArgumentParser(description='train a network')
@@ -62,6 +64,17 @@ def parse_network_cfg(cfgfile):
     print('layer number is %d'%(layerList.__len__() - 1) )
     return layerList
 
+def adjust_learning_rate(optimizer, batch, lr, steps):
+    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
+    for i in range(len(steps)):
+        scale = scales[i] if i < len(scales) else 1
+        if batch >= steps[i]:
+            lr = lr * scale
+        else:
+            break
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr/batch_size
+    return lr
 
 if __name__ == '__main__':
     args = parse_args()
@@ -75,6 +88,8 @@ if __name__ == '__main__':
     print('the depth of the network is %d'%(layerList.__len__()-1))
     network = net.network(layerList)
     criterion = loss.CostYoloV2(network.layers[-1].flow[0])
+    max_batch = network.max_batches
+    lr = network.lr / network.batch
     #step 2: load network parameters
     #network.load_weights(args.weight)
     network.init_weights()
@@ -82,7 +97,8 @@ if __name__ == '__main__':
     if args.cuda:
         if args.ngpus:
             print('use mult-gpu')
-            network = nn.DataParallel(network).cuda()         
+            network = nn.DataParallel(network).cuda()   
+            #criterion = nn.DataParallel(criterion).cuda()
         else:
             network = network.cuda()
     #step 3: load data 
@@ -90,11 +106,14 @@ if __name__ == '__main__':
     dataloader = data.DataLoader(dataset, batch_size=args.batch, shuffle=1)
     dataIter = iter(dataloader)
     #step 4: define optimizer
-    optimizer = optim.Adam(network.parameters(),lr=0.0001)
+    optimizer = optim.Adam(network.parameters(),lr=lr)
     #step 5: start train
     print('start training...')
     t_start = time.time()
-    for i in range(100):
+    #step 6 : initialize visdom board
+    if args.vis:
+        vis = visdom.Visdom(env=u'test1')
+    for i in range(max_batch):
     #for i in range(network.max_batches):
         imgs, labels = next(dataIter)
         imgs = Variable( imgs)
@@ -114,3 +133,21 @@ if __name__ == '__main__':
         optimizer.step()
         t4 = time.time()
         print('forward time: %f, loss time: %f, backward time: %f, update time: %f'%((t1-t0),(t2-t1),(t3-t2),(t4-t3)))
+        if args.vis:
+            loss = cost.cpu().data
+            loss_coords = criterion.loss_coords.cpu().data.view(1)
+            loss_obj = criterion.loss_obj.cpu().data.view(1)
+            loss_noobj = criterion.loss_noobj.cpu().data.view(1)
+            loss_classes = criterion.loss_classes.cpu().data.view(1)
+            if i > 0:
+                vis.line(loss,X=np.array([i]),win='loss',update='append')
+                vis.line(loss_obj,X=np.array([i]),win='loss_obj',update='append')
+                vis.line(loss_noobj,X=np.array([i]),win='loss_noobj',update='append')
+                vis.line(loss_coords,X=np.array([i]),win='loss_coords',update='append')
+                vis.line(loss_classes,X=np.array([i]),win='loss_classes',update='append')
+            else:
+                vis.line(loss,X=np.array([0]),win='loss',opts=dict(title='loss'))
+                vis.line(loss_obj,X=np.array([0]),win='loss_obj',opts=dict(title='obj_loss'))
+                vis.line(loss_noobj,X=np.array([0]),win='loss_noobj',opts=dict(title='noobj_loss'))
+                vis.line(loss_coords,X=np.array([0]),win='loss_coords',opts=dict(title='coords_loss'))
+                vis.line(loss_classes,X=np.array([0]),win='loss_classes',opts=dict(title='classes_loss'))
