@@ -89,7 +89,7 @@ class region(nn.Module):
             out3 = F.softmax(v3, 1)
             out_buf = t.cat( (out1, out_wh, out2, out3), 1)
             outlist.append(out_buf)
-            output = t.cat(outlist, 1)
+        output = t.cat(outlist, 1)
         return output
         
 class yolo(nn.Module):

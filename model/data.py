@@ -1,12 +1,14 @@
 import os
 import random
 from PIL import Image, ImageEnhance
+from PIL import ImageFile
 import torch
 import numpy as np
 import torchvision as tv 
 from torch.utils import data
 from torchvision import transforms as T 
 
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 class YoloDataset(data.Dataset):
     def __init__(self, listFile, width, height, truth=1, data_expand=1, train=1):
         self.imageList = []

@@ -19,9 +19,12 @@ class network(nn.Module):
         self.widthList.append(self.width)
         self.heightList.append(self.height)
         self.layers = []
+        self.layername = []
+        self.header = torch.IntTensor([0,0,0,0])
         for i in range(1, layerlist.__len__()):
             layer = l.make_layer(layerlist[i], self.widthList, self.heightList, ChannelIn, ChannelOut, i-1)
             self.layers.append(layer)
+            self.layername.append(layer.name)
         self.layerNum = self.layers.__len__()
         self.models = nn.ModuleList()
         self.module_num = 0
@@ -34,13 +37,13 @@ class network(nn.Module):
         input = x
         self.output = []
         for i in range(self.layerNum):
-            if self.layers[i].name == 'route':
+            if self.layername[i] == 'route':
                 if self.layers[i].l_in == 0:
                     output = self.output[i + self.layers[i].l_route]
                 else:
                     input = torch.cat( (self.output[i + self.layers[i].l_in], self.output[i + self.layers[i].l_route]), 1)
                     output = input
-            elif self.layers[i].name == 'shortcut':
+            elif self.layername[i] == 'shortcut':
                 output = input + self.output[i + self.layers[i].l_shortcut]
             else:
                 output = self.models[i](input)
@@ -90,13 +93,14 @@ class network(nn.Module):
                 pass
 
     def save_weights(self, weightFile):
+        print('saving weight to' + weightFile)
         fp = open(weightFile, 'wb')
         self.header[3] = self.seen
         header = self.header
         header.numpy().tofile(fp)
         for i in range(self.layerNum):
-            if self.layers[i].name == 'conv':
-                module = self.layers[i].flow
+            if self.layername[i] == 'conv':
+                module = self.models[i]
                 if module.__len__() <= 2:
                     save_conv_weights(fp, module[0])
                 elif module.__len__() == 3:
@@ -155,8 +159,8 @@ def save_conv_bn_weights(fp, md_conv, md_bn):
 
 def save_conv_weights(fp, md_conv):
     if md_conv.bias.is_cuda:
-        md_conv(conv_model.bias.data).numpy().tofile(fp)
-        md_conv(conv_model.weight.data).numpy().tofile(fp)
+        convert2cpu(md_conv.bias.data).numpy().tofile(fp)
+        convert2cpu(md_conv.weight.data).numpy().tofile(fp)
     else:
         md_conv.bias.data.numpy().tofile(fp)
         md_conv.weight.data.numpy().tofile(fp)
