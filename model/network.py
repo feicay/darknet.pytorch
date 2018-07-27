@@ -49,6 +49,7 @@ class network(nn.Module):
                 output = self.models[i](input)
             self.output.append( output )
             input = output
+        self.seen += self.batch
         return output
 
 
@@ -96,7 +97,10 @@ class network(nn.Module):
         print('saving weight to' + weightFile)
         fp = open(weightFile, 'wb')
         self.header[3] = self.seen
-        header = self.header
+        if self.header.is_cuda:
+            header = torch.IntTensor(self.header.size()).copy_(self.header)
+        else:
+            header = self.header
         header.numpy().tofile(fp)
         for i in range(self.layerNum):
             if self.layername[i] == 'conv':

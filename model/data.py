@@ -53,7 +53,7 @@ class YoloDataset(data.Dataset):
             mode = pil_img.mode
         transform = T.Compose([T.ToTensor(),T.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5])])
         if self.train:
-            if (self.seen)%640 == 1 and self.seen > 100:
+            if (self.seen)%1280 == 1 and self.seen > 6400:
                 self.width_now = (random.randint(0,6) + 10)*32
                 self.height_now = (random.randint(0,6) + 10)*32
                 print('resizing input %d x %d'%(self.width_now,self.height_now))

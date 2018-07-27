@@ -20,7 +20,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='train a network')
     parser.add_argument('--dataset',help='training set config file',default='dataset/coco.data',type=str)
     parser.add_argument('--netcfg',help='the network config file',default='cfg/yolov2.cfg',type=str)
-    parser.add_argument('--weight',help='the network weight file',default='weight/yolov2_final.weight',type=str)
+    parser.add_argument('--weight',help='the network weight file',default='backup/yolov2.backup',type=str)
     parser.add_argument('--batch',help='training batch size',default=64,type=int)
     parser.add_argument('--vis',help='visdom the training process',default=1,type=int)
     parser.add_argument('--cuda',help='use the GPU',default=1,type=int)
@@ -92,10 +92,13 @@ if __name__ == '__main__':
     network = net.network(layerList)
     criterion = loss.CostYoloV2(network.layers[-1].flow[0])
     max_batch = network.max_batches
-    lr = network.lr / network.batch
+    batch = network.batch
+    lr = network.lr / batch
     #step 2: load network parameters
-    #network.load_weights(args.weight)
-    network.init_weights()
+    network.load_weights(args.weight)
+    seen = network.seen
+    print('seen=%d'%seen)
+    #network.init_weights()
     layerNum = network.layerNum
     if args.cuda:
         if args.ngpus:
@@ -110,8 +113,11 @@ if __name__ == '__main__':
             num_gpu = 1
     #step 3: load data 
     dataset = dat.YoloDataset(trainlist,416,416)
-    dataloader = data.DataLoader(dataset, batch_size=args.batch, shuffle=1)
-    dataIter = iter(dataloader)
+    timesPerEpoch = int(dataset.len / batch)
+    max_epoch = int(max_batch / timesPerEpoch)
+    print('max epoch : %d'%max_epoch)
+    dataloader = data.DataLoader(dataset, batch_size=args.batch, shuffle=1, drop_last=True)
+    #dataIter = iter(dataloader)
     #step 4: define optimizer
     optimizer = optim.Adam(network.parameters(),lr=lr*num_gpu)
     #step 5: start train
@@ -120,58 +126,63 @@ if __name__ == '__main__':
     #step 6 : initialize visdom board
     if args.vis:
         vis = visdom.Visdom(env=u'test1')
-    for i in range(max_batch):
-    #for i in range(network.max_batches):
-        imgs, labels = next(dataIter)
-        imgs = Variable( imgs )
-        labels =  Variable(labels)
-        if args.cuda:
-            imgs =  imgs.cuda()
-            #labels =  labels.cuda()
-        #forward propagate
-        optimizer.zero_grad()
-        t0 = time.time()
-        pred = network.forward(imgs)
-        #calculate loss
-        t1 = time.time()
-        pred = pred.cpu()
-        cost = criterion(pred, labels)
-        cost = cost.cuda()
-        #back propagate
-        t2 = time.time() 
-        cost.backward()
-        #update parameters
-        t3 = time.time()
-        optimizer.step()
-        t4 = time.time()
-        model.seen += model.batch
-        print('forward time: %f, loss time: %f, backward time: %f, update time: %f'%((t1-t0),(t2-t1),(t3-t2),(t4-t3)))
-        if i % 500 == 0 and i > 0:
-            weightname = backupdir + '/' + netname + '.backup'
-            model.save_weights(weightname)
-            adjust_learning_rate(optimizer, i, model, num_gpu)
-        if args.vis:
+    #step 7 : start training
+    for j in range(max_epoch):
+        for ii,(imgs, labels) in enumerate(dataloader):
+            imgs = Variable( imgs )
+            labels =  Variable(labels)
             if args.cuda:
-                loss = criterion.loss.cpu().data.view(1)
-                loss_coords = criterion.loss_coords.cpu().data.view(1)
-                loss_obj = criterion.loss_obj.cpu().data.view(1)
-                loss_noobj = criterion.loss_noobj.cpu().data.view(1)
-                loss_classes = criterion.loss_classes.cpu().data.view(1)
-            else:
-                loss = criterion.loss.data.view(1)
-                loss_coords = criterion.loss_coords.data.view(1)
-                loss_obj = criterion.loss_obj.data.view(1)
-                loss_noobj = criterion.loss_noobj.data.view(1)
-                loss_classes = criterion.loss_classes.data.view(1)
-            if i > 0:
-                vis.line(loss,X=np.array([i]),win='loss',update='append')
-                vis.line(loss_obj,X=np.array([i]),win='loss_obj',update='append')
-                vis.line(loss_noobj,X=np.array([i]),win='loss_noobj',update='append')
-                vis.line(loss_coords,X=np.array([i]),win='loss_coords',update='append')
-                vis.line(loss_classes,X=np.array([i]),win='loss_classes',update='append')
-            else:
-                vis.line(loss,X=np.array([0]),win='loss',opts=dict(title='loss'))
-                vis.line(loss_obj,X=np.array([0]),win='loss_obj',opts=dict(title='obj_loss'))
-                vis.line(loss_noobj,X=np.array([0]),win='loss_noobj',opts=dict(title='noobj_loss'))
-                vis.line(loss_coords,X=np.array([0]),win='loss_coords',opts=dict(title='coords_loss'))
-                vis.line(loss_classes,X=np.array([0]),win='loss_classes',opts=dict(title='classes_loss'))
+                imgs =  imgs.cuda()
+                #labels =  labels.cuda()
+            #forward propagate
+            optimizer.zero_grad()
+            t0 = time.time()
+            pred = network.forward(imgs)
+            #calculate loss
+            t1 = time.time()
+            pred = pred.cpu()
+            cost = criterion(pred, labels)
+            cost = cost.cuda()
+            #back propagate
+            t2 = time.time() 
+            cost.backward()
+            #update parameters
+            t3 = time.time()
+            optimizer.step()
+            t4 = time.time()
+            print('forward time: %f, loss time: %f, backward time: %f, update time: %f'%((t1-t0),(t2-t1),(t3-t2),(t4-t3)))
+            loss = criterion.loss.cpu().data.view(1)
+            if np.isnan(loss.numpy()):
+                print('loss is nan, check parameters!')
+                sys.exit(-1)
+            i = j * timesPerEpoch + ii 
+            if i % 500 == 0 and i > 0:
+                weightname = backupdir + '/' + netname + '.backup'
+                model.save_weights(weightname)
+                adjust_learning_rate(optimizer, i, model, num_gpu)
+                if i%5000 == 0:
+                    weightname = backupdir + '/' + netname + '-' + str(i) + '.weight'
+                    model.save_weights(weightname)
+            if args.vis:
+                if args.cuda:
+                    loss_coords = criterion.loss_coords.cpu().data.view(1)
+                    loss_obj = criterion.loss_obj.cpu().data.view(1)
+                    loss_noobj = criterion.loss_noobj.cpu().data.view(1)
+                    loss_classes = criterion.loss_classes.cpu().data.view(1)
+                else:
+                    loss_coords = criterion.loss_coords.data.view(1)
+                    loss_obj = criterion.loss_obj.data.view(1)
+                    loss_noobj = criterion.loss_noobj.data.view(1)
+                    loss_classes = criterion.loss_classes.data.view(1)
+                if i > 0:
+                    vis.line(loss,X=np.array([i]),win='loss',update='append')
+                    vis.line(loss_obj,X=np.array([i]),win='loss_obj',update='append')
+                    vis.line(loss_noobj,X=np.array([i]),win='loss_noobj',update='append')
+                    vis.line(loss_coords,X=np.array([i]),win='loss_coords',update='append')
+                    vis.line(loss_classes,X=np.array([i]),win='loss_classes',update='append')
+                else:
+                    vis.line(loss,X=np.array([0]),win='loss',opts=dict(title='loss'))
+                    vis.line(loss_obj,X=np.array([0]),win='loss_obj',opts=dict(title='obj_loss'))
+                    vis.line(loss_noobj,X=np.array([0]),win='loss_noobj',opts=dict(title='noobj_loss'))
+                    vis.line(loss_coords,X=np.array([0]),win='loss_coords',opts=dict(title='coords_loss'))
+                    vis.line(loss_classes,X=np.array([0]),win='loss_classes',opts=dict(title='classes_loss'))
