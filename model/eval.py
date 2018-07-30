@@ -50,33 +50,32 @@ class evalYolov2(nn.Module):
                 classes_im = classes.permute(1,2,0).contiguous().view(in_height*in_width, (self.anchor_len-5))
                 prob_cls, idx_cls = classes_im.max(dim=1)
                 box_list.append(box_im.view(in_height*in_width,4))
-                obj_list.append(obj_im.view(in_height*in_width))
-                cls_list.append(idx_cls.view(in_height*in_width))
-                prob_cls_list.append(prob_cls.view(in_height*in_width))
+                obj_list.append(obj_im.view(in_height*in_width,1))
+                cls_list.append(idx_cls.view(in_height*in_width,1))
+                prob_cls_list.append(prob_cls.view(in_height*in_width,1))
             obj_total = torch.cat(obj_list, 0)
             box_total = torch.cat(box_list, 0)
-            cls_total = torch.cat(cls_list, 0)
+            cls_total = torch.cat(cls_list, 0).float()
             prob_cls_total = torch.cat(prob_cls_list, 0)
             detection = torch.cat((obj_total,box_total,cls_total,prob_cls_total), 1)
-            result = nms(detection, self.nms_thresh)
+            result = nms(detection, self.obj_thresh, self.nms_thresh)
             if truth is None:
-                mask = result[:, 0].sub(self.obj_thresh).sign()
-                mask = torch.max(mask, zeros)
-                n_result = int(mask.sum())
-                result = result[0:n_result, :]
                 result_list.append(result)
             else:
+                mask_pred = result[:, 0].sub(self.obj_thresh).sign()
+                mask_pred = torch.max(mask_pred, zeros)
                 truth_im = truth[b,:,:]
                 truth_num_obj = truth_im[:,0].sign().sum()
                 truth_im = truth_im[0:truth_num_obj, :]
                 truth_box = truth_im[:, 0:4]
-                truth_cls = truth_im[:, 4]
+                truth_cls = truth_im[:, 4].view(1)
                 result_box = result[:, 1:5].clone()
                 iou, idx = box_iou_eval(result_box, truth_box).max(dim=1)
-                mask_pred = result[:, 0].sub(self.obj_thresh).sign()
-                mask_pred = torch.max(mask_pred, zeros)
                 n_pred = int(mask_pred.sum())
-                mask_truth =  iou.sub(self.obj_thresh).sign()
+                mask_iou =  iou.sub(self.obj_thresh).sign()
+                cls_cmp_truth = torch.index_select(truth_cls, 0, idx)
+                mask_cls = result_box[:, 5].eq(cls_cmp_truth)
+                mask_truth = mask_iou.mul(mask_cls)
                 mask_truth = torch.max(mask_truth, zeros)
                 n_truth = int(mask_truth.sum())
                 n_TP = int(torch.mul(mask_truth, mask_pred).sum())
@@ -86,26 +85,41 @@ class evalYolov2(nn.Module):
                 Recall = float(n_TP)/mask_truth
                 self.AP += AP
                 self.Recall += Recall
-        return result_list
+                result = result[0:n_pred, :]
+                result_list.append(result)
+        self.AP = self.AP / batch
+        self.Recall = self.Recall / batch
+        result = torch.cat(result_list, 0)
+        return result
+    def set_object_thresh(self, thresh):
+        self.obj_thresh = thresh
 
-def nms(pred, thresh):
-    num, l = pred.size()
-    p_obj = pred[:, 0]
-    _, idx = p_obj.sort(descending=True)
-    pred_s = pred.index_select(0, idx).clone()
-    out_list = []
+def nms(pred, obj_thresh, nms_thresh):
     zeros = torch.zeros(1)
     if pred.is_cuda:
         zeros = zeros.cuda()
-    for i in range(num):
-        if pred_s[i,0] > 0:
+    num, l = pred.size()
+    p_obj = pred[:, 0]
+    p_obj, idx = p_obj.sort(descending=True)
+    pred_o = pred.index_select(0, idx).clone()
+    mask = p_obj.sub(obj_thresh).sign()
+    mask = torch.max(mask, zeros)
+    num_obj = int(mask.sum())
+    pred_o = pred_o[0:num_obj, :]
+    p_prob = pred_o[:, 6]
+    p_prob, idx = p_prob.sort(descending=True)
+    pred_s = pred_o.index_select(0, idx).clone()
+    num, _ = pred_s.size()
+    out_list = []
+    for i in range(num-1):
+        if pred_s[i,6] > 0:
             out_list.append(pred_s[i,:].view(1,l))
-            pred_box = pred_s[i,1:5]
-            truth_box = pred_s[(i+1):num, 1:5]
-            iou = box_iou_eval(pred_box, truth_box)
-            mask = iou.sub(thresh).sign() * (-1)
+            pred_box = pred_s[i,1:5].view(1,4)
+            truth_box = pred_s[(i+1):num, 1:5].view((num-i-1),4)
+            iou = box_iou_eval(pred_box, truth_box).view(num-i-1)
+            mask = iou.sub(nms_thresh).sign() * (-1)
             mask = torch.max(mask, zeros)
-            pred_s[(i+1):num, 0] = pred_s[(i+1):num, 0].mul(mask)
+            pred_s[(i+1):num, 6] = pred_s[(i+1):num, 6].view(num-i-1).mul(mask)
         else:
             pass
     out = torch.cat(out_list,0)

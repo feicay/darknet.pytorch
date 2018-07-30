@@ -20,7 +20,8 @@ class network(nn.Module):
         self.heightList.append(self.height)
         self.layers = []
         self.layername = []
-        self.header = torch.IntTensor([0,0,0,0])
+        self.header = torch.IntTensor([0,0,0])
+        self.seen = torch.LongTensor([0])
         for i in range(1, layerlist.__len__()):
             layer = l.make_layer(layerlist[i], self.widthList, self.heightList, ChannelIn, ChannelOut, i-1)
             self.layers.append(layer)
@@ -31,7 +32,6 @@ class network(nn.Module):
         for i in range(self.layerNum):
             self.models.append(self.layers[i].flow)
             self.module_num += self.layers[i].have_flow
-        self.seen = 0
 
     def forward(self, x):
         input = x
@@ -71,9 +71,10 @@ class network(nn.Module):
         if fp is None:
             print('Can not open weight file!')
             sys.exit(0)
-        header = np.fromfile(fp, count=4, dtype=np.int32)
+        header = np.fromfile(fp, count=3, dtype=np.int32)
         self.header = torch.from_numpy(header)
-        self.seen = self.header[3]
+        seen = np.fromfile(fp, count=1, dtype=np.int64)
+        self.seen = torch.from_numpy(seen)
         weightData = np.fromfile(fp, dtype = np.float32)
         fp.close()
         index = 0
@@ -96,12 +97,14 @@ class network(nn.Module):
     def save_weights(self, weightFile):
         print('saving weight to' + weightFile)
         fp = open(weightFile, 'wb')
-        self.header[3] = self.seen
         if self.header.is_cuda:
             header = torch.IntTensor(self.header.size()).copy_(self.header)
+            seen = torch.LongTensor(self.seen.size()).copy_(self.seen)
         else:
             header = self.header
+            seen = self.seen
         header.numpy().tofile(fp)
+        seen.numpy().tofile(fp)
         for i in range(self.layerNum):
             if self.layername[i] == 'conv':
                 module = self.models[i]

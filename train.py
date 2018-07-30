@@ -21,8 +21,8 @@ def parse_args():
     parser.add_argument('--dataset',help='training set config file',default='dataset/coco.data',type=str)
     parser.add_argument('--netcfg',help='the network config file',default='cfg/yolov2.cfg',type=str)
     parser.add_argument('--weight',help='the network weight file',default='backup/yolov2.backup',type=str)
-    parser.add_argument('--batch',help='training batch size',default=64,type=int)
     parser.add_argument('--vis',help='visdom the training process',default=1,type=int)
+    parser.add_argument('--init',help='initialize the network parameter',default=0,type=int)
     parser.add_argument('--cuda',help='use the GPU',default=1,type=int)
     parser.add_argument('--ngpus',help='use mult-gpu',default=1,type=int)
     args = parser.parse_args()
@@ -90,15 +90,18 @@ if __name__ == '__main__':
     layer = []
     print('the depth of the network is %d'%(layerList.__len__()-1))
     network = net.network(layerList)
-    criterion = loss.CostYoloV2(network.layers[-1].flow[0])
     max_batch = network.max_batches
     batch = network.batch
     lr = network.lr / batch
     #step 2: load network parameters
-    network.load_weights(args.weight)
+    if args.init == 0:
+        network.load_weights(args.weight)
+    else:
+        network.init_weights()
     seen = network.seen
+    criterion = loss.CostYoloV2(network.layers[-1].flow[0], seen)
     print('seen=%d'%seen)
-    #network.init_weights()
+    start_batch = seen / batch
     layerNum = network.layerNum
     if args.cuda:
         if args.ngpus:
@@ -106,7 +109,6 @@ if __name__ == '__main__':
             network = nn.DataParallel(network).cuda()   
             model = network.module
             num_gpu = torch.cuda.device_count()
-            #criterion = nn.DataParallel(criterion).cuda()
         else:
             network = network.cuda()
             model = network
@@ -116,8 +118,8 @@ if __name__ == '__main__':
     timesPerEpoch = int(dataset.len / batch)
     max_epoch = int(max_batch / timesPerEpoch)
     print('max epoch : %d'%max_epoch)
-    dataloader = data.DataLoader(dataset, batch_size=args.batch, shuffle=1, drop_last=True)
-    #dataIter = iter(dataloader)
+    start_epoch = int(start_batch / timesPerEpoch)
+    dataloader = data.DataLoader(dataset, batch_size=batch, shuffle=1, drop_last=True)
     #step 4: define optimizer
     optimizer = optim.Adam(network.parameters(),lr=lr*num_gpu)
     #step 5: start train
@@ -127,7 +129,8 @@ if __name__ == '__main__':
     if args.vis:
         vis = visdom.Visdom(env=u'test1')
     #step 7 : start training
-    for j in range(max_epoch):
+    for j in range(start_epoch, max_epoch):
+        print('start training epoch %d'%start_epoch)
         for ii,(imgs, labels) in enumerate(dataloader):
             imgs = Variable( imgs )
             labels =  Variable(labels)
@@ -160,9 +163,6 @@ if __name__ == '__main__':
                 weightname = backupdir + '/' + netname + '.backup'
                 model.save_weights(weightname)
                 adjust_learning_rate(optimizer, i, model, num_gpu)
-                if i%5000 == 0:
-                    weightname = backupdir + '/' + netname + '-' + str(i) + '.weight'
-                    model.save_weights(weightname)
             if args.vis:
                 if args.cuda:
                     loss_coords = criterion.loss_coords.cpu().data.view(1)
@@ -186,3 +186,6 @@ if __name__ == '__main__':
                     vis.line(loss_noobj,X=np.array([0]),win='loss_noobj',opts=dict(title='noobj_loss'))
                     vis.line(loss_coords,X=np.array([0]),win='loss_coords',opts=dict(title='coords_loss'))
                     vis.line(loss_classes,X=np.array([0]),win='loss_classes',opts=dict(title='classes_loss'))
+        weightname = backupdir + '/' + netname + '-epoch' + str(j) + '.weight'
+        model.save_weights(weightname)
+    print('finished training!')

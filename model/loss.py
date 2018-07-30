@@ -93,7 +93,7 @@ def box_iou_v(pred_box, truth_box):
 
 
 class CostYoloV2(nn.Module):
-    def __init__(self, RegionLayer):
+    def __init__(self, RegionLayer, seen):
         super(CostYoloV2, self).__init__()
         self.count = 0
         self.iou = 0.0
@@ -112,7 +112,7 @@ class CostYoloV2(nn.Module):
         self.num = RegionLayer.num
         self.anchor_len = self.classes + self.coords + 1
         self.thresh = 0.5
-        self.seen = 0
+        self.seen = seen
     def forward(self, x, truth):
         batch_size, channels, in_height, in_width = x.size()
         self.seen += 1
@@ -170,7 +170,7 @@ class CostYoloV2(nn.Module):
                 idx_end = idx + 4
                 box_pred = x_b[idx:idx_end, :, :]
                 box_pred = box_pred.clone()
-                obj_pred = x_b[4, :, :]
+                obj_pred = x_b[idx+4, :, :]
                 obj_pred = obj_pred.clone()
                 box_truth = truth_b[:, 0:4]
                 box_truth = box_truth.clone()
@@ -250,7 +250,7 @@ class CostYoloV2(nn.Module):
         noobj_truth = torch.cat(truth_noobj_list, 0)
         noobj_pred = torch.cat(noobj_pred_list, 0)
         noobj_truth = noobj_truth.detach()
-        self.loss_noobj = mse(noobj_pred, noobj_truth)
+        self.loss_noobj = mse(noobj_pred, noobj_truth) * self.noobject_scale
         if self.seen < 500:
             box_t = Variable(torch.Tensor([0.5,0.5,0,0])).expand(in_height*in_width, 4).expand(self.num*batch_size, in_height*in_width, 4)
             if x.is_cuda:
