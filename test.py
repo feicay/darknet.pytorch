@@ -75,8 +75,8 @@ def get_names(nameFile):
                 names.append(line)
     return names
 
-def plot_boxes_cv2(image, boxes, class_names=None, color=None):
-    img = cv2.imread(image)
+def plot_boxes_cv2(image, boxes, class_names=None, color=None, fps=None):
+    img = image
     colors = torch.FloatTensor([[1,0,1],[0,0,1],[0,1,1],[0,1,0],[1,1,0],[1,0,0]])
     def get_color(c, x, max_val):
         ratio = float(x)/max_val * 5
@@ -107,13 +107,19 @@ def plot_boxes_cv2(image, boxes, class_names=None, color=None):
             red   = get_color(2, offset, classes)
             green = get_color(1, offset, classes)
             blue  = get_color(0, offset, classes)
+            str_prob = '%.2f'%cls_conf
+            info = class_names[cls_id] + str_prob
             if color is None:
                 rgb = (red, green, blue)
-            img = cv2.putText(img, class_names[cls_id], (x1,y1), cv2.FONT_HERSHEY_SIMPLEX, 1.2, rgb, 1)
+            img = cv2.putText(img, info, (x1,y1), cv2.FONT_HERSHEY_SIMPLEX, 0.7, rgb, 1)
         img = cv2.rectangle(img, (x1,y1), (x2,y2), rgb, 1)
-    savename = 'prediction.png'
-    print("save plot results to %s" %savename)
-    cv2.imwrite(savename, img)
+    if fps is None:
+        savename = 'prediction.png'
+        print("save plot results to %s" %savename)
+        cv2.imwrite(savename, img)
+    else:
+        fps_info = 'fps:' + '%.2f'%fps
+        img = cv2.putText(img, fps_info, (100,100), cv2.FONT_HERSHEY_SIMPLEX, 1, rgb, 1)
     return img
 
 def detect_image(image, network, thresh, names):
@@ -123,13 +129,46 @@ def detect_image(image, network, thresh, names):
     img = transform(img).cuda()
     img = img.view(1,3,network.height,network.width)
     pred = network(img)
-    evaluator = eva.evalYolov2(network.layers[-1].flow[0], obj_thresh=0.5, nms_thresh=0.45)
+    evaluator = eva.evalYolov2(network.layers[-1].flow[0], class_thresh=thresh)
     result = evaluator.forward(pred)
     print(result)
-    im = plot_boxes_cv2(image, result, names)
-    #cv2.imshow('prediction',im)
-    #cv2.waitKey(0)
+    image1 = cv2.imread(image)
+    im = plot_boxes_cv2(image1, result, names)
+    cv2.imshow('prediction',im)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
     return 
+
+def detect_vedio(image, network, thresh, names):
+    transform = T.Compose([T.ToTensor(),T.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5])])
+    evaluator = eva.evalYolov2(network.layers[-1].flow[0], class_thresh=thresh)
+    if image == '0':
+        cap = cv2.VideoCapture(0)
+    else:
+        cap = cv2.VideoCapture(image)
+    if not cap.isOpened():
+        print("Unable to open camera")
+        exit(-1)
+    fps = 0.0
+    while(cap.isOpened()):  
+        t0 = time.time()
+        ret, img_raw = cap.read()
+        img = cv2.resize(img_raw,(network.width, network.height))
+        if ret == True:
+            img = transform(img).view(1,3,network.height,network.width).cuda()
+            pred = network(img)
+            result = evaluator.forward(pred)
+            t1 = time.time()
+            fps = 1/(t1-t0)
+            if result is not None:
+                im = plot_boxes_cv2(img_raw, result, names, fps=fps)
+            cv2.imshow('prediction',im)
+            print('fps: %f'%fps)
+            if cv2.waitKey(30) & 0xFF == ord('q'):
+                break
+    cap.release()  
+    cv2.destroyAllWindows()
+    return
 
 if __name__ == '__main__':
     args = parse_args()
@@ -146,18 +185,15 @@ if __name__ == '__main__':
     network = net.network(layerList)
     #step 2: load network parameters
     network.load_weights(args.weight)
-    seen = network.seen
-    #network.init_weights()
     layerNum = network.layerNum
     if args.cuda:
         network = network.cuda()
-    #step 3: load data 
+    #step 3: load data and test
     image = args.img
     img_tail =  image.split('.')[-1] 
     if img_tail == 'jpg' or img_tail =='jpeg' or img_tail == 'png':
-        detect_image(image, network, args.thresh, names)
-        '''
-    elif img_tail == 'mp4' or img_tail =='mkv' or img_tail == 'avi':
-        detect_vedio(image, network)
-        '''
+        detect_image(image, network, args.thresh, names)   
+    elif img_tail == 'mp4' or img_tail =='mkv' or img_tail == 'avi' or img_tail =='0':
+        detect_vedio( image, network, args.thresh, names)
+       
 

@@ -3,7 +3,7 @@ from torch import nn
 from torch.autograd import Variable
 
 class evalYolov2(nn.Module):
-    def __init__(self, RegionLayer, nms_thresh=0.45, obj_thresh=0.5):
+    def __init__(self, RegionLayer, nms_thresh=0.45, obj_thresh=0.5, class_thresh=0.2):
         super(evalYolov2, self).__init__()
         self.classes = RegionLayer.classes
         self.coords = RegionLayer.coords
@@ -13,9 +13,13 @@ class evalYolov2(nn.Module):
         self.count = 0
         self.nms_thresh = nms_thresh
         self.obj_thresh = obj_thresh
+        self.class_thresh = class_thresh
     def forward(self, pred, truth=None):
         self.AP = 0.0
         self.Recall = 0.0
+        self.TP = 0
+        self.TN = 0
+        self.FP = 0
         batch, channels, in_height, in_width = pred.size()
         zeros = Variable(torch.zeros(1))
         one = Variable(torch.ones(1))
@@ -58,12 +62,11 @@ class evalYolov2(nn.Module):
             cls_total = torch.cat(cls_list, 0).float()
             prob_cls_total = torch.cat(prob_cls_list, 0)
             detection = torch.cat((obj_total,box_total,cls_total,prob_cls_total), 1)
-            result = nms(detection, self.obj_thresh, self.nms_thresh)
+            result = nms_obj(detection, self.obj_thresh, self.nms_thresh)
             if truth is None:
+                result = result_prob_fliter(result, self.class_thresh)
                 result_list.append(result)
             else:
-                mask_pred = result[:, 0].sub(self.obj_thresh).sign()
-                mask_pred = torch.max(mask_pred, zeros)
                 truth_im = truth[b,:,:]
                 truth_num_obj = truth_im[:,0].sign().sum()
                 truth_im = truth_im[0:truth_num_obj, :]
@@ -71,30 +74,34 @@ class evalYolov2(nn.Module):
                 truth_cls = truth_im[:, 4].view(1)
                 result_box = result[:, 1:5].clone()
                 iou, idx = box_iou_eval(result_box, truth_box).max(dim=1)
-                n_pred = int(mask_pred.sum())
+                n_pred, _ = result.size()
                 mask_iou =  iou.sub(self.obj_thresh).sign()
                 cls_cmp_truth = torch.index_select(truth_cls, 0, idx)
                 mask_cls = result_box[:, 5].eq(cls_cmp_truth)
                 mask_truth = mask_iou.mul(mask_cls)
                 mask_truth = torch.max(mask_truth, zeros)
                 n_truth = int(mask_truth.sum())
-                n_TP = int(torch.mul(mask_truth, mask_pred).sum())
-                n_FP = mask_pred - n_TP
-                n_FN = mask_truth - n_TP
-                AP = float(n_TP) / mask_pred
-                Recall = float(n_TP)/mask_truth
-                self.AP += AP
-                self.Recall += Recall
+                n_TP = int(mask_truth.sum())
+                n_FP = n_pred - n_TP
+                n_TN = truth_num_obj - n_TP
+                AP = float(n_TP) / n_pred
+                Recall = float(n_TP)/truth_num_obj
+                self.TP += n_TP
+                self.FP += n_FP
+                self.TN += n_TN
                 result = result[0:n_pred, :]
                 result_list.append(result)
-        self.AP = self.AP / batch
-        self.Recall = self.Recall / batch
-        result = torch.cat(result_list, 0)
+        if truth is not None:
+            self.AP = self.TP / (self.TP + self.FP)
+            self.Recall = self.TP / (self.TP + self.TN)
+            print('AP: %f, Recall: %f'%(self.AP,self.Recall))
+        if result is not None:
+            result = torch.cat(result_list, 0)
         return result
     def set_object_thresh(self, thresh):
         self.obj_thresh = thresh
 
-def nms(pred, obj_thresh, nms_thresh):
+def nms_cls(pred, obj_thresh, nms_thresh):
     zeros = torch.zeros(1)
     if pred.is_cuda:
         zeros = zeros.cuda()
@@ -124,6 +131,56 @@ def nms(pred, obj_thresh, nms_thresh):
             pass
     out = torch.cat(out_list,0)
     return out
+
+def nms_obj(pred, obj_thresh, nms_thresh):
+    zeros = torch.zeros(1)
+    if pred.is_cuda:
+        zeros = zeros.cuda()
+    num, l = pred.size()
+    p_obj = pred[:, 0]
+    p_obj, idx = p_obj.sort(descending=True)
+    pred_o = pred.index_select(0, idx).clone()
+    mask = p_obj.sub(obj_thresh).sign()
+    mask = torch.max(mask, zeros)
+    num_obj = int(mask.sum())
+    pred_o = pred_o[0:num_obj, :]
+    out_list = []
+    for i in range(num_obj-1):
+        if pred_o[i,0] > 0.01:
+            out_list.append(pred_o[i,:].view(1,l))
+            pred_box = pred_o[i,1:5].view(1,4)
+            truth_box = pred_o[(i+1):num_obj, 1:5].view((num_obj-i-1),4)
+            iou = box_iou_eval(pred_box, truth_box).view(num_obj-i-1)
+            mask = iou.sub(nms_thresh).sign() * (-1)
+            mask = torch.max(mask, zeros)
+            pred_o[(i+1):num_obj, 0] = pred_o[(i+1):num_obj, 0].view(num_obj-i-1).mul(mask)
+        else:
+            pass
+    if out_list.__len__() > 0:
+        out = torch.cat(out_list,0)
+        return out
+    else:
+        return None
+
+def result_prob_fliter(result, class_thresh):
+    zeros = torch.zeros(1)
+    if result.is_cuda:
+        zeros = zeros.cuda()
+    mask_pred = result[:, 6].sub(class_thresh).sign()
+    mask_pred = torch.max(mask_pred, zeros)
+    result[:, 6] = torch.mul(result[:, 6],  mask_pred)
+    outlist = []
+    num, l = result.size()
+    for i in range(num):
+        if result[i, 6] > 0.01:
+            outlist.append(result[i, :].view(1,l))
+        else:
+            pass
+    if outlist.__len__() > 0:
+        out = torch.cat(outlist, 0)
+        return out
+    else:
+        return None
 
 #pred_box is (1,4) tensor and truth_box is (n,4) tensor
 def box_iou_eval(pred_box, truth_box):
