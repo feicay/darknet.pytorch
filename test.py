@@ -24,7 +24,7 @@ def parse_args():
     parser.add_argument('--weight',help='the network weight file',default='backup/yolov2.backup',type=str)
     parser.add_argument('--vis',help='visdom the training process',default=1,type=int)
     parser.add_argument('--img',help='the input file for detection',default='dog.jpg',type=str)
-    parser.add_argument('--thresh',help='the input file for detection',default=0.5,type=float)
+    parser.add_argument('--thresh',help='the input file for detection',default=0.3,type=float)
     parser.add_argument('--cuda',help='use the GPU',default=1,type=int)
     args = parser.parse_args()
     return args

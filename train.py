@@ -130,7 +130,10 @@ if __name__ == '__main__':
         vis = visdom.Visdom(env=u'test1')
     #step 7 : start training
     for j in range(start_epoch, max_epoch):
-        print('start training epoch %d'%start_epoch)
+        print('start training epoch %d'%j)
+        iou_epoch = 0.0
+        class_epoch = 0.0
+        obj_epoch = 0.0
         for ii,(imgs, labels) in enumerate(dataloader):
             imgs = Variable( imgs )
             labels =  Variable(labels)
@@ -155,6 +158,9 @@ if __name__ == '__main__':
             t4 = time.time()
             print('forward time: %f, loss time: %f, backward time: %f, update time: %f'%((t1-t0),(t2-t1),(t3-t2),(t4-t3)))
             loss = criterion.loss.cpu().data.view(1)
+            iou_epoch += criterion.Aiou.cpu().data.view(1)
+            class_epoch += criterion.AclassP.cpu().data.view(1)
+            obj_epoch += criterion.Aobj.cpu().data.view(1)
             if np.isnan(loss.numpy()):
                 print('loss is nan, check parameters!')
                 sys.exit(-1)
@@ -188,4 +194,16 @@ if __name__ == '__main__':
                     vis.line(loss_classes,X=np.array([0]),win='loss_classes',opts=dict(title='classes_loss'))
         weightname = backupdir + '/' + netname + '-epoch' + str(j) + '.weight'
         model.save_weights(weightname)
+        iou_epoch = iou_epoch / timesPerEpoch
+        class_epoch = class_epoch / timesPerEpoch
+        obj_epoch = obj_epoch / timesPerEpoch
+        if args.vis:
+            if j > 0:
+                vis.line(iou_epoch, X=np.array([j]),win='iou',update='append')
+                vis.line(class_epoch, X=np.array([j]),win='class',update='append')
+                vis.line(obj_epoch, X=np.array([j]),win='obj',update='append')
+            else:
+                vis.line(iou_epoch, X=np.array([j]),win='iou',opts=dict(title='iou'))
+                vis.line(class_epoch, X=np.array([j]),win='class',opts=dict(title='class'))
+                vis.line(obj_epoch, X=np.array([j]),win='obj',opts=dict(title='obj'))
     print('finished training!')
