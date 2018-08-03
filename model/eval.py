@@ -3,7 +3,7 @@ from torch import nn
 from torch.autograd import Variable
 
 class evalYolov2(nn.Module):
-    def __init__(self, RegionLayer, nms_thresh=0.45, obj_thresh=0.5, class_thresh=0.2):
+    def __init__(self, RegionLayer, nms_thresh=0.3, obj_thresh=0.7, class_thresh=0.4):
         super(evalYolov2, self).__init__()
         self.classes = RegionLayer.classes
         self.coords = RegionLayer.coords
@@ -14,7 +14,7 @@ class evalYolov2(nn.Module):
         self.nms_thresh = nms_thresh
         self.obj_thresh = obj_thresh
         self.class_thresh = class_thresh
-    def forward(self, pred, truth=None):
+    def forward(self, pred, truth=None, w_im=1, h_im=1):
         self.AP = 0.0
         self.Recall = 0.0
         self.TP = 0
@@ -53,6 +53,7 @@ class evalYolov2(nn.Module):
                 obj_im = obj.view(1,in_height*in_width)
                 classes_im = classes.permute(1,2,0).contiguous().view(in_height*in_width, (self.anchor_len-5))
                 prob_cls, idx_cls = classes_im.max(dim=1)
+                prob_cls = prob_cls.view(1,in_height*in_width).mul(obj_im)
                 box_list.append(box_im.view(in_height*in_width,4))
                 obj_list.append(obj_im.view(in_height*in_width,1))
                 cls_list.append(idx_cls.view(in_height*in_width,1))
@@ -61,6 +62,9 @@ class evalYolov2(nn.Module):
             box_total = torch.cat(box_list, 0)
             cls_total = torch.cat(cls_list, 0).float()
             prob_cls_total = torch.cat(prob_cls_list, 0)
+            #if the w/h of the image and the net is different, correct the region box
+            #if (in_height*w_im) != (in_width*h_im):
+                #box_total = correct_region_box(box_total, in_width*32, in_height*32, w_im, h_im)
             detection = torch.cat((obj_total,box_total,cls_total,prob_cls_total), 1)
             result = nms_obj(detection, self.obj_thresh, self.nms_thresh)
             if truth is None:
@@ -100,6 +104,25 @@ class evalYolov2(nn.Module):
         return result
     def set_object_thresh(self, thresh):
         self.obj_thresh = thresh
+
+def correct_region_box(boxes, net_w, net_h, im_w, im_h):
+    print(net_w, net_h, im_w, im_h)
+    if((net_w/net_h) < (im_w/im_h)):
+        new_w = net_w
+        new_h = net_w * im_h / im_w
+    else:
+        new_h = net_h
+        new_w = im_w * net_h / im_h
+    delta_x = (net_w - new_w)/2/net_w
+    delta_y = (net_h - new_h)/2/net_h
+    co_w = float(net_w)/new_w
+    co_h = float(net_h)/new_h
+    print(delta_x, delta_y, co_w, co_h)
+    boxes[:, 0] = boxes[:, 0].sub(delta_x).mul(co_w)
+    boxes[:, 1] = boxes[:, 1].sub(delta_y).mul(co_h)
+    boxes[:, 2] = boxes[:, 2].mul(co_w)
+    boxes[:, 3] = boxes[:, 3].mul(co_h)
+    return boxes
 
 def nms_cls(pred, obj_thresh, nms_thresh):
     zeros = torch.zeros(1)
@@ -143,6 +166,8 @@ def nms_obj(pred, obj_thresh, nms_thresh):
     mask = p_obj.sub(obj_thresh).sign()
     mask = torch.max(mask, zeros)
     num_obj = int(mask.sum())
+    if num_obj == 0:
+        return None
     pred_o = pred_o[0:num_obj, :]
     out_list = []
     for i in range(num_obj-1):
@@ -163,6 +188,8 @@ def nms_obj(pred, obj_thresh, nms_thresh):
         return None
 
 def result_prob_fliter(result, class_thresh):
+    if result is None:
+        return None
     zeros = torch.zeros(1)
     if result.is_cuda:
         zeros = zeros.cuda()
@@ -172,7 +199,7 @@ def result_prob_fliter(result, class_thresh):
     outlist = []
     num, l = result.size()
     for i in range(num):
-        if result[i, 6] > 0.01:
+        if result[i, 6] > 0.01 and result[i,3]*result[i,3] > 0.0004:
             outlist.append(result[i, :].view(1,l))
         else:
             pass

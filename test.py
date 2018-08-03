@@ -124,13 +124,14 @@ def plot_boxes_cv2(image, boxes, class_names=None, color=None, fps=None):
 
 def detect_image(image, network, thresh, names):
     pil_img = Image.open(image)
+    w_im, h_im = pil_img.size
     transform = T.Compose([T.ToTensor(),T.Normalize(mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5])])
     img = pil_img.resize( (network.width, network.height) )
     img = transform(img).cuda()
     img = img.view(1,3,network.height,network.width)
     pred = network(img)
     evaluator = eva.evalYolov2(network.layers[-1].flow[0], class_thresh=thresh)
-    result = evaluator.forward(pred)
+    result = evaluator.forward(pred, w_im=w_im, h_im=h_im)
     print(result)
     image1 = cv2.imread(image)
     im = plot_boxes_cv2(image1, result, names)
@@ -153,11 +154,12 @@ def detect_vedio(image, network, thresh, names):
     while(cap.isOpened()):  
         t0 = time.time()
         ret, img_raw = cap.read()
+        h_im , w_im, _ = img_raw.shape
         img = cv2.resize(img_raw,(network.width, network.height))
         if ret == True:
             img = transform(img).view(1,3,network.height,network.width).cuda()
             pred = network(img)
-            result = evaluator.forward(pred)
+            result = evaluator.forward(pred, w_im=w_im, h_im=h_im)
             t1 = time.time()
             fps = 1/(t1-t0)
             if result is not None:

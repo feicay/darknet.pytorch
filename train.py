@@ -101,7 +101,6 @@ if __name__ == '__main__':
     seen = network.seen
     criterion = loss.CostYoloV2(network.layers[-1].flow[0], seen)
     print('seen=%d'%seen)
-    start_batch = seen / batch
     layerNum = network.layerNum
     if args.cuda:
         if args.ngpus:
@@ -118,7 +117,9 @@ if __name__ == '__main__':
     timesPerEpoch = int(dataset.len / batch)
     max_epoch = int(max_batch / timesPerEpoch)
     print('max epoch : %d'%max_epoch)
-    start_epoch = int(start_batch / timesPerEpoch)
+    start_batch = seen / timesPerEpoch
+    start_epoch = int(start_batch / batch / num_gpu)
+    print('start epoch : %d'%start_epoch)
     dataloader = data.DataLoader(dataset, batch_size=batch, shuffle=1, drop_last=True)
     #step 4: define optimizer
     optimizer = optim.Adam(network.parameters(),lr=lr*num_gpu)
@@ -169,7 +170,7 @@ if __name__ == '__main__':
                 weightname = backupdir + '/' + netname + '.backup'
                 model.save_weights(weightname)
                 adjust_learning_rate(optimizer, i, model, num_gpu)
-            if args.vis:
+            if args.vis :
                 if args.cuda:
                     loss_coords = criterion.loss_coords.cpu().data.view(1)
                     loss_obj = criterion.loss_obj.cpu().data.view(1)
@@ -180,7 +181,7 @@ if __name__ == '__main__':
                     loss_obj = criterion.loss_obj.data.view(1)
                     loss_noobj = criterion.loss_noobj.data.view(1)
                     loss_classes = criterion.loss_classes.data.view(1)
-                if i > 0:
+                if i > start_epoch * timesPerEpoch:
                     vis.line(loss,X=np.array([i]),win='loss',update='append')
                     vis.line(loss_obj,X=np.array([i]),win='loss_obj',update='append')
                     vis.line(loss_noobj,X=np.array([i]),win='loss_noobj',update='append')
@@ -198,7 +199,7 @@ if __name__ == '__main__':
         class_epoch = class_epoch / timesPerEpoch
         obj_epoch = obj_epoch / timesPerEpoch
         if args.vis:
-            if j > 0:
+            if j > start_epoch:
                 vis.line(iou_epoch, X=np.array([j]),win='iou',update='append')
                 vis.line(class_epoch, X=np.array([j]),win='class',update='append')
                 vis.line(obj_epoch, X=np.array([j]),win='obj',update='append')
