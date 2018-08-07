@@ -99,6 +99,7 @@ if __name__ == '__main__':
     else:
         network.init_weights()
     seen = network.seen
+    network = network.train()
     criterion = loss.CostYoloV2(network.layers[-1].flow[0], seen)
     print('seen=%d'%seen)
     layerNum = network.layerNum

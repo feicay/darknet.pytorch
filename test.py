@@ -164,6 +164,8 @@ def detect_vedio(image, network, thresh, names):
             fps = 1/(t1-t0)
             if result is not None:
                 im = plot_boxes_cv2(img_raw, result, names, fps=fps)
+            else:
+                im = img_raw
             cv2.imshow('prediction',im)
             print('fps: %f'%fps)
             if cv2.waitKey(30) & 0xFF == ord('q'):
@@ -191,6 +193,7 @@ if __name__ == '__main__':
     if args.cuda:
         network = network.cuda()
     #step 3: load data and test
+    network = network.eval()
     image = args.img
     img_tail =  image.split('.')[-1] 
     if img_tail == 'jpg' or img_tail =='jpeg' or img_tail == 'png':
