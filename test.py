@@ -8,6 +8,7 @@ import re
 import math
 import model.network as net
 import model.eval as eva
+import model.data as dat
 import torch.nn as nn
 from torch.utils import data
 from torch.autograd import Variable
@@ -24,6 +25,7 @@ def parse_args():
     parser.add_argument('--weight',help='the network weight file',default='backup/yolov2.backup',type=str)
     parser.add_argument('--vis',help='visdom the training process',default=1,type=int)
     parser.add_argument('--img',help='the input file for detection',default='dog.jpg',type=str)
+    parser.add_argument('--eval',help='the input file for detection',default=0,type=int)
     parser.add_argument('--thresh',help='the input file for detection',default=0.3,type=float)
     parser.add_argument('--cuda',help='use the GPU',default=1,type=int)
     args = parser.parse_args()
@@ -35,6 +37,7 @@ def parse_dataset_cfg(cfgfile):
         p2 = re.compile(r'train=')
         p3 = re.compile(r'names=')
         p4 = re.compile(r'backup=')
+        p5 = re.compile(r'valid=')
         for line in fp.readlines():
             a = line.replace(' ','').replace('\n','')
             if p1.findall(a):
@@ -45,7 +48,9 @@ def parse_dataset_cfg(cfgfile):
                 namesdir = re.sub('names=','',a)
             if p4.findall(a):
                 backupdir = re.sub('backup=','',a)
-    return int(classes),trainlist,namesdir,backupdir
+            if p5.findall(a):
+                validlist = re.sub('valid=','',a)
+    return int(classes),trainlist,namesdir,backupdir,validlist
 
 def parse_network_cfg(cfgfile):
     with open(cfgfile,'r') as fp:
@@ -154,8 +159,10 @@ def detect_vedio(image, network, thresh, names):
     while(cap.isOpened()):  
         t0 = time.time()
         ret, img_raw = cap.read()
+        b,g,r=cv2.split(img_raw)
+        img_raw1=cv2.merge([r,g,b])
         h_im , w_im, _ = img_raw.shape
-        img = cv2.resize(img_raw,(network.width, network.height))
+        img = cv2.resize(img_raw1,(network.width, network.height))
         if ret == True:
             img = transform(img).view(1,3,network.height,network.width).cuda()
             pred = network(img)
@@ -168,7 +175,7 @@ def detect_vedio(image, network, thresh, names):
                 im = img_raw
             cv2.imshow('prediction',im)
             print('fps: %f'%fps)
-            if cv2.waitKey(30) & 0xFF == ord('q'):
+            if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
     cap.release()  
     cv2.destroyAllWindows()
@@ -177,9 +184,9 @@ def detect_vedio(image, network, thresh, names):
 if __name__ == '__main__':
     args = parse_args()
     print(args)
-    classes, trainlist, namesdir, backupdir = parse_dataset_cfg(args.dataset)
+    classes, trainlist, namesdir, backupdir ,validlist= parse_dataset_cfg(args.dataset)
     print('%d classes in dataset'%classes)
-    print('trainlist directory is ' + trainlist)
+    print('validlist directory is ' + validlist)
     names = get_names(namesdir)
     #step 1: parse the network
     layerList = parse_network_cfg(args.netcfg)
@@ -194,11 +201,24 @@ if __name__ == '__main__':
         network = network.cuda()
     #step 3: load data and test
     network = network.eval()
-    image = args.img
-    img_tail =  image.split('.')[-1] 
-    if img_tail == 'jpg' or img_tail =='jpeg' or img_tail == 'png':
-        detect_image(image, network, args.thresh, names)   
-    elif img_tail == 'mp4' or img_tail =='mkv' or img_tail == 'avi' or img_tail =='0':
-        detect_vedio( image, network, args.thresh, names)
+    if args.eval == 1:
+        dataset = dat.YoloDataset(validlist,416,416,train=0)
+        dataloader = data.DataLoader(dataset, batch_size=16, shuffle=1, drop_last=True)
+        dataiter = iter(dataloader)
+        evaluator = eva.evalYolov2(network.layers[-1].flow[0], class_thresh=args.thresh)
+        for i in range(100):
+            imgs, labels = next(dataiter)
+            if args.cuda == 1:
+                imgs = imgs.cuda()
+                labels = labels.cuda()
+            pred = network(imgs)
+            result = evaluator.forward(pred, truth=labels)
+    else:
+        image = args.img
+        img_tail =  image.split('.')[-1] 
+        if img_tail == 'jpg' or img_tail =='jpeg' or img_tail == 'png':
+            detect_image(image, network, args.thresh, names)   
+        elif img_tail == 'mp4' or img_tail =='mkv' or img_tail == 'avi' or img_tail =='0':
+            detect_vedio( image, network, args.thresh, names)
        
 

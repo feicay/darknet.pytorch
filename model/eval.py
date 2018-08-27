@@ -3,7 +3,7 @@ from torch import nn
 from torch.autograd import Variable
 
 class evalYolov2(nn.Module):
-    def __init__(self, RegionLayer, nms_thresh=0.3, obj_thresh=0.7, class_thresh=0.4):
+    def __init__(self, RegionLayer, nms_thresh=0.45, obj_thresh=0.5, class_thresh=0.1):
         super(evalYolov2, self).__init__()
         self.classes = RegionLayer.classes
         self.coords = RegionLayer.coords
@@ -72,24 +72,24 @@ class evalYolov2(nn.Module):
                 result_list.append(result)
             else:
                 truth_im = truth[b,:,:]
-                truth_num_obj = truth_im[:,0].sign().sum()
+                truth_num_obj = truth_im[:,0].sign().sum().int()
                 truth_im = truth_im[0:truth_num_obj, :]
                 truth_box = truth_im[:, 0:4]
-                truth_cls = truth_im[:, 4].view(1)
+                truth_cls = truth_im[:, 4].int()
+                if result is None:
+                    continue
                 result_box = result[:, 1:5].clone()
                 iou, idx = box_iou_eval(result_box, truth_box).max(dim=1)
                 n_pred, _ = result.size()
                 mask_iou =  iou.sub(self.obj_thresh).sign()
                 cls_cmp_truth = torch.index_select(truth_cls, 0, idx)
-                mask_cls = result_box[:, 5].eq(cls_cmp_truth)
+                mask_cls = result[:, 5].int().eq(cls_cmp_truth).float()
                 mask_truth = mask_iou.mul(mask_cls)
                 mask_truth = torch.max(mask_truth, zeros)
                 n_truth = int(mask_truth.sum())
                 n_TP = int(mask_truth.sum())
                 n_FP = n_pred - n_TP
-                n_TN = truth_num_obj - n_TP
-                AP = float(n_TP) / n_pred
-                Recall = float(n_TP)/truth_num_obj
+                n_TN = int(truth_num_obj) - n_TP
                 self.TP += n_TP
                 self.FP += n_FP
                 self.TN += n_TN

@@ -201,15 +201,17 @@ class CostYoloV2(nn.Module):
                 #find the best iou for the current label
                 box_truth_shift = box_truth
                 box_truth_shift = box_truth_shift.clone()
-                box_truth_shift[0] = 0.0
-                box_truth_shift[1] = 0.0
+                #box_truth_shift[0] = 0.0
+                #box_truth_shift[1] = 0.0
                 box_pred_shift_l = []
                 for n in range(self.num):
                     box_pred = x_b[(n*self.anchor_len):(n*self.anchor_len+4), j, i].view(4)
                     box_pred = box_pred.clone()
                     box_pred_shift = box_pred
-                    box_pred_shift[0] = 0.0
-                    box_pred_shift[1] = 0.0
+                    #box_pred_shift[0] = 0.0
+                    #box_pred_shift[1] = 0.0
+                    box_pred_shift[0] = box_pred_shift[0].add(i).div(in_width)
+                    box_pred_shift[1] = box_pred_shift[1].add(j).div(in_height)
                     box_pred_shift[2] = torch.exp(box_pred_shift[2]) * (self.anchors[n*2]/in_width)
                     box_pred_shift[3] = torch.exp(box_pred_shift[3]) * (self.anchors[n*2 + 1]/in_height)
                     box_pred_shift_l.append(box_pred_shift.view(1,4))

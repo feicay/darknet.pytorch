@@ -15,6 +15,7 @@ from torch.autograd import Variable
 import time
 import visdom
 import numpy as np
+import gc
 
 def parse_args():
     parser = argparse.ArgumentParser(description='train a network')
@@ -34,6 +35,7 @@ def parse_dataset_cfg(cfgfile):
         p2 = re.compile(r'train=')
         p3 = re.compile(r'names=')
         p4 = re.compile(r'backup=')
+        p5 = re.compile(r'valid=')
         for line in fp.readlines():
             a = line.replace(' ','').replace('\n','')
             if p1.findall(a):
@@ -44,7 +46,9 @@ def parse_dataset_cfg(cfgfile):
                 namesdir = re.sub('names=','',a)
             if p4.findall(a):
                 backupdir = re.sub('backup=','',a)
-    return int(classes),trainlist,namesdir,backupdir
+            if p5.findall(a):
+                validlist = re.sub('valid=','',a)
+    return int(classes),trainlist,namesdir,backupdir,validlist
 
 def parse_network_cfg(cfgfile):
     with open(cfgfile,'r') as fp:
@@ -81,7 +85,7 @@ def adjust_learning_rate(optimizer, batch, model, num_gpu):
 if __name__ == '__main__':
     args = parse_args()
     print(args)
-    classes, trainlist, namesdir, backupdir = parse_dataset_cfg(args.dataset)
+    classes, trainlist, namesdir, backupdir, validlist = parse_dataset_cfg(args.dataset)
     print('%d classes in dataset'%classes)
     print('trainlist directory is ' + trainlist)
     #step 1: parse the network
@@ -93,6 +97,7 @@ if __name__ == '__main__':
     max_batch = network.max_batches
     batch = network.batch
     lr = network.lr / batch
+    network_val = net.network(layerList)
     #step 2: load network parameters
     if args.init == 0:
         network.load_weights(args.weight)
@@ -115,6 +120,7 @@ if __name__ == '__main__':
             num_gpu = 1
     #step 3: load data 
     dataset = dat.YoloDataset(trainlist,416,416)
+    validDataset = dat.YoloDataset(validlist,416,416,train=0)
     timesPerEpoch = int(dataset.len / batch)
     max_epoch = int(max_batch / timesPerEpoch)
     print('max epoch : %d'%max_epoch)
@@ -122,6 +128,7 @@ if __name__ == '__main__':
     start_epoch = int(start_batch / batch / num_gpu)
     print('start epoch : %d'%start_epoch)
     dataloader = data.DataLoader(dataset, batch_size=batch, shuffle=1, drop_last=True)
+    dataloader_valid = data.DataLoader(validDataset, batch_size=4, shuffle=1, drop_last=True)
     #step 4: define optimizer
     optimizer = optim.Adam(network.parameters(),lr=lr*num_gpu)
     #step 5: start train
@@ -136,6 +143,7 @@ if __name__ == '__main__':
         iou_epoch = 0.0
         class_epoch = 0.0
         obj_epoch = 0.0
+        train_loss = 0.0
         for ii,(imgs, labels) in enumerate(dataloader):
             imgs = Variable( imgs )
             labels =  Variable(labels)
@@ -163,6 +171,7 @@ if __name__ == '__main__':
             iou_epoch += criterion.Aiou.cpu().data.view(1)
             class_epoch += criterion.AclassP.cpu().data.view(1)
             obj_epoch += criterion.Aobj.cpu().data.view(1)
+            train_loss += loss
             if np.isnan(loss.numpy()):
                 print('loss is nan, check parameters!')
                 sys.exit(-1)
@@ -171,17 +180,11 @@ if __name__ == '__main__':
                 weightname = backupdir + '/' + netname + '.backup'
                 model.save_weights(weightname)
                 adjust_learning_rate(optimizer, i, model, num_gpu)
-            if args.vis :
-                if args.cuda:
-                    loss_coords = criterion.loss_coords.cpu().data.view(1)
-                    loss_obj = criterion.loss_obj.cpu().data.view(1)
-                    loss_noobj = criterion.loss_noobj.cpu().data.view(1)
-                    loss_classes = criterion.loss_classes.cpu().data.view(1)
-                else:
-                    loss_coords = criterion.loss_coords.data.view(1)
-                    loss_obj = criterion.loss_obj.data.view(1)
-                    loss_noobj = criterion.loss_noobj.data.view(1)
-                    loss_classes = criterion.loss_classes.data.view(1)
+            if args.vis and i%10 ==0:
+                loss_coords = criterion.loss_coords.cpu().data.view(1)
+                loss_obj = criterion.loss_obj.cpu().data.view(1)
+                loss_noobj = criterion.loss_noobj.cpu().data.view(1)
+                loss_classes = criterion.loss_classes.cpu().data.view(1)
                 if i > start_epoch * timesPerEpoch:
                     vis.line(loss,X=np.array([i]),win='loss',update='append')
                     vis.line(loss_obj,X=np.array([i]),win='loss_obj',update='append')
@@ -194,8 +197,41 @@ if __name__ == '__main__':
                     vis.line(loss_noobj,X=np.array([0]),win='loss_noobj',opts=dict(title='noobj_loss'))
                     vis.line(loss_coords,X=np.array([0]),win='loss_coords',opts=dict(title='coords_loss'))
                     vis.line(loss_classes,X=np.array([0]),win='loss_classes',opts=dict(title='classes_loss'))
-        weightname = backupdir + '/' + netname + '-epoch' + str(j) + '.weight'
-        model.save_weights(weightname)
+        train_loss = loss / batch
+        if j%10 == 0:
+            weightname = backupdir + '/' + netname + '-epoch' + str(j) + '.weight'
+            model.save_weights(weightname)
+        else:
+            weightname = backupdir + '/' + netname + '.backup'
+            model.save_weights(weightname)
+        #after one epoch, test network in valid dataset
+        gc.collect()
+        cost_val = torch.zeros(1)
+        network_val.load_weights(weightname)
+        network_val = network_val.eval()
+        network_val = network_val.cuda()
+        for ii,(imgs, labels) in enumerate(dataloader_valid):
+            if ii > 10:
+                break
+            imgs = Variable( imgs, requires_grad=False )
+            labels =  Variable(labels, requires_grad=False )
+            if args.cuda:
+                imgs =  imgs.cuda()
+                #labels =  labels.cuda()
+            #forward propagate
+            pred = network_val.forward(imgs)
+            #calculate loss
+            pred = pred.cpu()
+            cost_val = cost_val + criterion(pred, labels)
+            del imgs
+            del labels
+            del pred
+            torch.cuda.empty_cache()
+            gc.collect()
+        cost_val = (cost_val / ii / 4).cpu().data
+        if args.vis:
+            vis.line(Y=torch.cat((cost_val.view(1,1), train_loss.view(1,1)),1).numpy(),X=np.array([j]),win='eval-train loss',update='append' if j>0 else None)
+        
         iou_epoch = iou_epoch / timesPerEpoch
         class_epoch = class_epoch / timesPerEpoch
         obj_epoch = obj_epoch / timesPerEpoch

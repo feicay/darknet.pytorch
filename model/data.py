@@ -80,18 +80,18 @@ class YoloDataset(data.Dataset):
             img = pil_img.resize( (self.width, self.height) )
         image = transform(img)
         label = torch.zeros(50,5)
-        if self.train:
-            objs = []
-            with open(labelDir,'r') as fl:
-                for line in fl.readlines():
-                    obj = line.replace(' \n','').replace('\n','').split(' ')
-                    objs.append(obj)
-            for i in range(min(objs.__len__(), 50) ):
-                #print(objs[i])
-                assert(objs[i].__len__() == 5)
-                label[i][0] = float(objs[i][1])
-                label[i][1] = float(objs[i][2])
-                label[i][2] = float(objs[i][3])
-                label[i][3] = float(objs[i][4])
-                label[i][4] = float(objs[i][0])
+        #if self.train:
+        objs = []
+        with open(labelDir,'r') as fl:
+            for line in fl.readlines():
+                obj = line.replace(' \n','').replace('\n','').split(' ')
+                objs.append(obj)
+        for i in range(min(objs.__len__(), 50) ):
+            #print(objs[i])
+            assert(objs[i].__len__() == 5)
+            label[i][0] = float(objs[i][1])
+            label[i][1] = float(objs[i][2])
+            label[i][2] = float(objs[i][3])
+            label[i][3] = float(objs[i][4])
+            label[i][4] = float(objs[i][0])
         return (image, label)
